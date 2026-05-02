@@ -1,0 +1,1807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>go-graph-doc</title>
+<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #30363d;
+  --accent: #58a6ff;
+  --accent2: #f78166;
+  --goroutine: #ffa657;
+  --text: #c9d1d9;
+  --text-dim: #6e7681;
+  --text-bright: #f0f6fc;
+  --hover: #1f2937;
+  --selected: #1c2a3a;
+  --divider: #21262d;
+  --node-stroke: #30363d;
+  --scrollbar: #30363d;
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', Menlo, monospace;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+body { overflow: hidden; height: 100vh; }
+
+#app { display: flex; height: 100vh; overflow: hidden; background: var(--bg); }
+
+/* ─── Panels ─────────────────────────────────── */
+.panel-left, .panel-right {
+  display: flex; flex-direction: column;
+  background: var(--panel); overflow: hidden; flex-shrink: 0;
+}
+.panel-center {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0;
+}
+
+/* ─── Dividers ───────────────────────────────── */
+.divider {
+  width: 4px; background: var(--divider); cursor: col-resize;
+  flex-shrink: 0; transition: background 0.15s; z-index: 10;
+}
+.divider:hover, .divider.active { background: var(--accent); }
+
+/* ─── Panel Headers ──────────────────────────── */
+.panel-header {
+  padding: 10px 12px 8px; border-bottom: 1px solid var(--border);
+  background: var(--panel); display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
+.panel-header h2 {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-dim); flex: 1;
+}
+
+/* ─── Scrollable areas ───────────────────────── */
+.scroll-area { flex: 1; overflow-y: auto; overflow-x: hidden; }
+.scroll-area::-webkit-scrollbar { width: 6px; }
+.scroll-area::-webkit-scrollbar-track { background: transparent; }
+.scroll-area::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 3px; }
+
+/* ─── Tree View ──────────────────────────────── */
+.search-wrap { padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.search-input {
+  width: 100%; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 9px; color: var(--text); font-size: 12px;
+  outline: none; font-family: inherit;
+}
+.search-input:focus { border-color: var(--accent); }
+.search-input::placeholder { color: var(--text-dim); }
+
+.tree-body { padding: 4px 0; }
+.tree-node {
+  display: flex; align-items: center; padding: 4px 10px 4px 0;
+  cursor: pointer; user-select: none; gap: 4px; min-width: 0;
+}
+.tree-node:hover { background: var(--hover); }
+.tree-toggle { color: var(--text-dim); font-size: 9px; width: 12px; flex-shrink: 0; text-align: center; }
+.tree-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.tree-label { font-size: 12px; font-weight: 600; color: var(--text-bright); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tree-folder { font-size: 12px; font-weight: 600; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tree-count { font-size: 10px; color: var(--text-dim); flex-shrink: 0; margin-left: auto; }
+.tree-receiver { font-size: 11px; font-weight: 700; color: #7aa2d4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; letter-spacing: 0.02em; }
+.tree-receiver--iface { color: #c792ea; font-style: italic; }
+
+.func-row {
+  display: flex; align-items: center; padding: 3px 10px 3px 0;
+  cursor: pointer; gap: 6px; border-left: 2px solid transparent;
+}
+.func-row:hover { background: var(--hover); }
+.func-row.selected { background: var(--selected); border-left-color: var(--accent); }
+.func-row--iface { opacity: 0.7; font-style: italic; }
+.func-name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); min-width: 0; }
+.func-row.selected .func-name { color: var(--accent); }
+.func-line { font-size: 10px; color: var(--text-dim); flex-shrink: 0; margin-left: auto; }
+
+/* ─── Graph toolbar ──────────────────────────── */
+.graph-toolbar {
+  display: flex; align-items: center; padding: 6px 12px;
+  border-bottom: 1px solid var(--border); gap: 8px; flex-shrink: 0;
+  background: var(--panel); flex-wrap: wrap;
+}
+.toolbar-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; }
+.btn-group { display: flex; gap: 2px; }
+.btn {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 11px;
+  font-family: inherit; transition: all 0.15s; white-space: nowrap;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.toolbar-sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+.depth-control { display: flex; align-items: center; gap: 4px; }
+.depth-val { font-size: 11px; color: var(--text); min-width: 20px; text-align: center; }
+.legend { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-dim); }
+.legend-line { width: 20px; height: 2px; }
+.legend-line.goroutine { background: repeating-linear-gradient(90deg,var(--goroutine) 0px,var(--goroutine) 5px,transparent 5px,transparent 8px); }
+.legend-line.call { background: #888; }
+
+/* ─── SVG Graph ──────────────────────────────── */
+.graph-area { flex: 1; position: relative; overflow: hidden; }
+#graph-svg { width: 100%; height: 100%; background: var(--bg); }
+.graph-empty {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; color: var(--text-dim); font-size: 14px; pointer-events: none;
+}
+
+/* ─── Doc Panel ──────────────────────────────── */
+.doc-nav {
+  display: flex; gap: 4px; padding: 6px 10px;
+  border-bottom: 1px solid var(--border); flex-shrink: 0; align-items: center;
+}
+.doc-nav .nav-btn {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 2px 10px; border-radius: 4px; cursor: pointer; font-size: 13px;
+  font-family: inherit; transition: all 0.15s;
+}
+.doc-nav .nav-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.doc-nav .nav-btn:disabled { opacity: 0.3; cursor: default; }
+.doc-counter { font-size: 10px; color: var(--text-dim); margin-left: auto; }
+
+.doc-body { padding: 14px; }
+.doc-pkg-small { font-size: 10px; color: var(--text-dim); margin-bottom: 3px; word-break: break-all; }
+.doc-func-name { font-size: 14px; font-weight: 700; color: var(--text-bright); margin-bottom: 4px; word-break: break-all; }
+.doc-signature {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 12px; font-size: 11px; color: var(--accent); white-space: pre-wrap;
+  word-break: break-all; margin-bottom: 12px; line-height: 1.6;
+}
+.doc-text { font-size: 12px; line-height: 1.7; color: var(--text); margin-bottom: 16px; white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+.doc-no-doc { font-size: 11px; color: var(--text-dim); font-style: italic; margin-bottom: 16px; }
+.doc-file { font-size: 10px; color: var(--text-dim); margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+
+.callers-callees { display: flex; gap: 12px; }
+.callers-col, .callees-col { flex: 1; min-width: 0; }
+.cc-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.cc-item { font-size: 11px; color: var(--text); padding: 3px 6px; border-radius: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+.cc-item:hover { background: var(--hover); color: var(--accent); }
+.cc-item--impl { color: #c792ea; }
+.cc-item--impl:hover { color: #e0b0ff; }
+.cc-title--impl { color: #c792ea; border-bottom-color: #c792ea44; }
+.cc-empty { font-size: 11px; color: var(--text-dim); font-style: italic; padding: 3px 6px; }
+
+.doc-placeholder {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 8px; color: var(--text-dim); font-size: 12px;
+  padding: 20px; text-align: center;
+}
+.doc-placeholder svg { opacity: 0.3; }
+
+/* ─── Tag sections in doc panel ──────────────── */
+.tag-section { margin-top: 16px; }
+.tag-section-header { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.tag-check-row { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 4px; cursor: pointer; }
+.tag-check-row:hover { background: var(--hover); }
+.tag-check-row input[type=checkbox] { cursor: pointer; flex-shrink: 0; }
+.tag-label-text { font-size: 11px; cursor: pointer; user-select: none; padding: 1px 5px; border-radius: 3px; }
+
+/* ─── Stats bar ──────────────────────────────── */
+.stats-bar {
+  padding: 4px 12px; border-top: 1px solid var(--border);
+  display: flex; gap: 16px; font-size: 10px; color: var(--text-dim);
+  flex-shrink: 0; background: var(--panel);
+}
+
+/* ─── D3 SVG styles ──────────────────────────── */
+.node-rect { stroke: var(--node-stroke); stroke-width: 1.5px; }
+.node-label { font-size: 11px; font-family: 'SF Mono','Fira Code',monospace; pointer-events: none; dominant-baseline: middle; text-anchor: middle; }
+.pkg-hull { stroke-width: 2; pointer-events: none; }
+.pkg-label { font-size: 10px; fill: var(--text-dim); pointer-events: none; font-family: inherit; }
+.link-line { stroke-width: 1.5; fill: none; }
+
+/* ─── Config Modal ───────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+  z-index: 200; display: flex; align-items: center; justify-content: center;
+}
+.modal {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  width: 720px; max-width: 94vw; max-height: 88vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+}
+.modal-header {
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+}
+.modal-header h2 { font-size: 13px; font-weight: 600; color: var(--text-bright); flex: 1; text-transform: none; letter-spacing: 0; }
+.modal-body { overflow-y: auto; flex: 1; padding: 16px; }
+.modal-tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+
+.section-subtitle {
+  font-size: 10px; color: var(--text-dim); text-transform: uppercase;
+  letter-spacing: 0.08em; margin-bottom: 10px;
+}
+
+.group-card {
+  border: 1px solid var(--border); border-radius: 8px;
+  margin-bottom: 12px; overflow: hidden;
+}
+.group-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; background: var(--bg);
+}
+.group-header input[type=checkbox] { cursor: pointer; }
+.group-name { font-size: 12px; font-weight: 600; color: var(--text-bright); flex: 1; }
+.group-body { padding: 10px 12px; }
+
+.tag-card {
+  border: 1px solid var(--border); border-radius: 6px;
+  margin-bottom: 8px; overflow: hidden;
+}
+.tag-card-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; background: var(--bg);
+}
+.tag-preview { font-size: 11px; flex: 1; padding: 2px 6px; border-radius: 3px; }
+.tag-edit-body { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.tag-edit-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 2px; }
+.css-textarea {
+  width: 100%; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 5px; padding: 7px 9px; color: var(--accent); font-size: 11px;
+  font-family: inherit; resize: vertical; min-height: 56px; outline: none;
+  line-height: 1.6;
+}
+.css-textarea:focus { border-color: var(--accent); }
+.css-textarea::placeholder { color: var(--text-dim); }
+
+.add-btn {
+  background: transparent; border: 1px dashed var(--border); color: var(--text-dim);
+  padding: 5px 12px; border-radius: 5px; cursor: pointer; font-size: 11px;
+  font-family: inherit; width: 100%; transition: all 0.15s;
+}
+.add-btn:hover { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ══════════ LEFT: Tree View ══════════ -->
+  <div class="panel-left" :style="{ width: leftWidth + 'vw' }">
+    <div class="panel-header">
+      <h2>Packages &amp; Functions</h2>
+      <span style="font-size:10px;color:var(--text-dim)">{{ totalFuncs }}</span>
+    </div>
+    <div class="search-wrap">
+      <input v-model="search" class="search-input" placeholder="Search packages or functions…" @input="onSearch">
+    </div>
+    <div class="scroll-area">
+      <div class="tree-body">
+        <template v-for="item in flatTree" :key="item.path">
+          <!-- Package or folder row -->
+          <div v-if="item.type === 'pkg'" class="tree-node" :style="{ paddingLeft: (item.level * 14 + 8) + 'px' }" @click="toggleNode(item.path)">
+            <span class="tree-toggle">{{ expandedNodes[item.path] !== false ? '▼' : '▶' }}</span>
+            <span v-if="item.pkg" class="tree-dot" :style="{ background: pkgColor(item.pkg.id) }"></span>
+            <span v-else style="width:7px;flex-shrink:0"></span>
+            <span v-if="item.pkg" class="tree-label" :title="item.pkg.id">{{ item.label }}</span>
+            <span v-else class="tree-folder">{{ item.label }}/</span>
+            <span v-if="item.pkg" class="tree-count">{{ filteredFunctions(item.pkg).length }}</span>
+          </div>
+          <!-- Receiver group row (type or interface) -->
+          <div v-else-if="item.type === 'receiver'" class="tree-node" :style="{ paddingLeft: (item.level * 14 + 8) + 'px' }" @click="toggleNode(item.path)">
+            <span class="tree-toggle">{{ expandedNodes[item.path] !== false ? '▼' : '▶' }}</span>
+            <span style="width:7px;flex-shrink:0"></span>
+            <span class="tree-receiver" :class="{ 'tree-receiver--iface': item.isInterface }">{{ item.label }}</span>
+          </div>
+          <!-- Free functions under a package -->
+          <template v-if="item.type === 'pkg' && item.pkg && expandedNodes[item.path] !== false">
+            <div
+              v-for="fn in freeFunctions(item.pkg)" :key="fn.id"
+              class="func-row" :class="{ selected: selectedId === fn.id }"
+              :style="{ paddingLeft: (item.level * 14 + 28) + 'px' }"
+              @click="selectFunction(fn.id)"
+            >
+              <span class="func-name" :title="fn.signature">{{ fn.name }}</span>
+              <span v-if="fn.line" class="func-line">:{{ fn.line }}</span>
+            </div>
+          </template>
+          <!-- Methods under a receiver group -->
+          <template v-if="item.type === 'receiver' && expandedNodes[item.path] !== false">
+            <div
+              v-for="fn in receiverFunctions(item.pkgId, item.label)" :key="fn.id"
+              class="func-row" :class="{ selected: selectedId === fn.id, 'func-row--iface': fn.isInterface }"
+              :style="{ paddingLeft: (item.level * 14 + 28) + 'px' }"
+              @click="selectFunction(fn.id)"
+            >
+              <span class="func-name" :title="fn.signature">{{ fn.receiverType }}.{{ fn.name }}</span>
+              <span v-if="fn.line" class="func-line">:{{ fn.line }}</span>
+            </div>
+          </template>
+        </template>
+        <div v-if="flatTree.length === 0" style="padding:20px;color:var(--text-dim);font-size:12px;text-align:center">
+          No results for "{{ search }}"
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider" :class="{ active: resizing === 'left' }" @mousedown.prevent="startResize('left', $event)"></div>
+
+  <!-- ══════════ CENTER: Graph ══════════ -->
+  <div class="panel-center">
+    <div class="graph-toolbar">
+      <span class="toolbar-label">Layout</span>
+      <div class="btn-group">
+        <button class="btn" :class="{ active: layout === 'layered' }" @click="setLayout('layered')">Layered</button>
+        <button class="btn" :class="{ active: layout === 'force' }" @click="setLayout('force')">Force</button>
+        <button class="btn" :class="{ active: layout === 'radial' }" @click="setLayout('radial')">Radial</button>
+      </div>
+      <div class="toolbar-sep"></div>
+      <span class="toolbar-label">Depth</span>
+      <div class="depth-control">
+        <button class="btn" @click="changeDepth(-1)">−</button>
+        <span class="depth-val">{{ depth === 0 ? '∞' : depth }}</span>
+        <button class="btn" @click="changeDepth(1)">+</button>
+      </div>
+      <div class="toolbar-sep"></div>
+      <button class="btn" @click="resetZoom">Reset zoom</button>
+      <button class="btn" @click="toggleGoEdges">{{ showGoEdges ? 'Hide' : 'Show' }} goroutines</button>
+      <template v-if="layout === 'force'">
+        <div class="toolbar-sep"></div>
+        <button class="btn" :class="{ active: paused }" @click="togglePause">{{ paused ? '▶ Resume' : '⏸ Pause' }}</button>
+        <button class="btn" @click="resetForcePositions" title="Reinitialize positions from layered layout">↺ Reset positions</button>
+      </template>
+      <div class="toolbar-sep"></div>
+      <button class="btn" @click="showConfig = true">⚙ Config</button>
+      <div class="toolbar-sep"></div>
+      <button class="btn" @click="exportConfig" title="Export tag groups &amp; node tags">⬇ Config</button>
+      <button class="btn" @click="importConfig" title="Import tag groups &amp; node tags">⬆ Config</button>
+      <button class="btn" @click="exportGraph"  title="Export graph layout (positions, zoom)">⬇ Graph</button>
+      <button class="btn" @click="importGraph"  title="Import graph layout (positions, zoom)">⬆ Graph</button>
+      <span v-if="serverEnabled && serverSynced" style="font-size:10px;color:var(--text-dim);margin-left:4px" title="State saved to server">☁</span>
+      <span v-if="!serverEnabled" style="font-size:10px;color:var(--accent2);margin-left:4px" title="Server sync disabled (got 403/404)">☁✕</span>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-line call"></div><span>call</span></div>
+        <div class="legend-item"><div class="legend-line goroutine"></div><span>goroutine</span></div>
+      </div>
+    </div>
+
+    <div class="graph-area">
+      <svg id="graph-svg" ref="svg"></svg>
+      <div v-if="totalFuncs === 0" class="graph-empty">No functions found. Check your package patterns and filters.</div>
+    </div>
+
+    <div class="stats-bar">
+      <span>static</span>
+      <span v-if="graphData.focusPkg">focus: {{ graphData.focusPkg }}</span>
+      <span>{{ totalFuncs }} functions</span>
+      <span>{{ graphData.edges.length }} edges</span>
+      <span>{{ graphData.packages.length }} packages</span>
+      <span v-if="visibleCount < totalFuncs" style="color:var(--accent)">showing {{ visibleCount }}</span>
+    </div>
+  </div>
+
+  <div class="divider" :class="{ active: resizing === 'right' }" @mousedown.prevent="startResize('right', $event)"></div>
+
+  <!-- ══════════ RIGHT: Doc Panel ══════════ -->
+  <div class="panel-right" :style="{ width: rightWidth + 'vw' }">
+    <div class="panel-header"><h2>Documentation</h2></div>
+    <div class="doc-nav">
+      <button class="nav-btn" :disabled="historyIndex <= 0" @click="navigateHistory(-1)">← Prev</button>
+      <button class="nav-btn" :disabled="historyIndex >= history.length - 1" @click="navigateHistory(1)">Next →</button>
+      <span class="doc-counter" v-if="history.length > 0">{{ historyIndex + 1 }} / {{ history.length }}</span>
+    </div>
+    <div class="scroll-area">
+      <div v-if="selectedFunction" class="doc-body">
+        <div class="doc-pkg-small">{{ selectedFunction.pkgPath }}</div>
+        <div class="doc-func-name">{{ selectedFunction.receiverType ? selectedFunction.receiverType.replace(/^\*/,'') + '.' + selectedFunction.name : selectedFunction.name }}</div>
+        <pre class="doc-signature">{{ selectedFunction.signature }}</pre>
+        <div v-if="selectedFunction.doc" class="doc-text">{{ selectedFunction.doc }}</div>
+        <div v-else class="doc-no-doc">No documentation available.</div>
+        <div v-if="selectedFunction.file" class="doc-file">{{ shortPath(selectedFunction.file) }}:{{ selectedFunction.line }}</div>
+
+        <div class="callers-callees">
+          <div class="callers-col">
+            <div class="cc-title">Callers ({{ selectedFunction.callerIds.length }})</div>
+            <div v-for="id in selectedFunction.callerIds" :key="id" class="cc-item" :style="nodeLabelStyle(id)" :title="functionMap[id]?.signature || id" @click="selectFunction(id)">{{ fnLabel(id) }}</div>
+            <div v-if="selectedFunction.callerIds.length === 0" class="cc-empty">none</div>
+          </div>
+          <div class="callees-col">
+            <div class="cc-title">Callees ({{ selectedFunction.calleeIds.length }})</div>
+            <div v-for="id in selectedFunction.calleeIds" :key="id" class="cc-item" :style="nodeLabelStyle(id)" :title="functionMap[id]?.signature || id" @click="selectFunction(id)">{{ fnLabel(id) }}</div>
+            <div v-if="selectedFunction.calleeIds.length === 0" class="cc-empty">none</div>
+          </div>
+        </div>
+
+        <!-- implements / implemented-by — same two-column layout -->
+        <div v-if="selectedFunction.isInterface || implInterfaces(selectedId).length" class="callers-callees">
+          <div class="callers-col" v-if="selectedFunction.isInterface">
+            <div class="cc-title cc-title--impl">Implemented by ({{ implConcretes(selectedId).length }})</div>
+            <div v-for="id in implConcretes(selectedId)" :key="id" class="cc-item cc-item--impl" :style="nodeLabelStyle(id)" :title="functionMap[id]?.signature || id" @click="selectFunction(id)">{{ fnLabel(id) }}</div>
+            <div v-if="!implConcretes(selectedId).length" class="cc-empty">none</div>
+          </div>
+          <div class="callees-col" v-if="!selectedFunction.isInterface">
+            <div class="cc-title cc-title--impl">Implements ({{ implInterfaces(selectedId).length }})</div>
+            <div v-for="id in implInterfaces(selectedId)" :key="id" class="cc-item cc-item--impl" :style="nodeLabelStyle(id)" :title="functionMap[id]?.signature || id" @click="selectFunction(id)">{{ fnLabel(id) }}</div>
+          </div>
+        </div>
+
+        <!-- ── Tag sections (one per enabled group) ── -->
+        <div v-for="group in enabledTagGroups" :key="group.id" class="tag-section">
+          <div class="tag-section-header">{{ group.name }}</div>
+          <div v-for="tag in group.tags" :key="tag.id" class="tag-check-row" @click="toggleNodeTag(selectedId, tag.id)">
+            <input type="checkbox" :checked="nodeHasTag(selectedId, tag.id)" @click.stop="toggleNodeTag(selectedId, tag.id)">
+            <span class="tag-label-text" :style="tag.labelCSS || ''">{{ tag.name }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="doc-placeholder">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+        <span>Click a function in the graph<br>or tree view to see its documentation.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ Config Modal ══════════ -->
+  <div v-if="showConfig" class="modal-overlay" @click.self="showConfig = false">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Configuration</h2>
+        <button class="btn" @click="showConfig = false">✕ Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-tabs">
+          <button class="btn" :class="{ active: configTab === 'tags' }" @click="configTab = 'tags'">Tag Groups</button>
+          <button class="btn" :class="{ active: configTab === 'headers' }" @click="configTab = 'headers'">HTTP Headers</button>
+        </div>
+
+        <!-- ── Tag Groups tab ── -->
+        <div v-if="configTab === 'tags'">
+          <div class="section-subtitle">
+            Global tag groups — enable/disable per project ({{ graphData.modulePath || 'unknown module' }})
+          </div>
+
+          <div v-if="tagGroups.length === 0" style="color:var(--text-dim);font-size:12px;margin-bottom:12px">
+            No tag groups yet. Create one below.
+          </div>
+
+          <div v-for="group in tagGroups" :key="group.id" class="group-card">
+            <div class="group-header">
+              <input type="checkbox" :checked="isGroupEnabled(group.id)" @change="toggleGroupEnabled(group.id)" title="Enable for this project">
+              <span v-if="!group._editing" class="group-name" style="flex:1">{{ group.name }}</span>
+              <input v-else v-model="group.name" class="search-input" style="flex:1;padding:3px 8px" @keyup.enter="finishEditGroup(group)" @blur="finishEditGroup(group)">
+              <button class="btn" @click="startEditGroup(group)" title="Rename">✎</button>
+              <button class="btn" style="color:var(--accent2)" @click="deleteGroup(group.id)" title="Delete group">✕</button>
+            </div>
+
+            <div class="group-body">
+              <div v-if="group.tags.length === 0" style="color:var(--text-dim);font-size:11px;margin-bottom:8px">No tags.</div>
+              <div v-for="tag in group.tags" :key="tag.id" class="tag-card">
+                <div class="tag-card-header">
+                  <span class="tag-preview" :style="tag.labelCSS || 'color:var(--text)'">{{ tag.name || '(unnamed)' }}</span>
+                  <button class="btn" @click="tag._expanded = !tag._expanded">{{ tag._expanded ? '▲' : '▼' }}</button>
+                  <button class="btn" style="color:var(--accent2)" @click="deleteTag(group, tag.id)">✕</button>
+                </div>
+                <div v-if="tag._expanded" class="tag-edit-body">
+                  <div>
+                    <div class="tag-edit-label">Name</div>
+                    <input v-model="tag.name" class="search-input" style="padding:4px 8px" @blur="saveGroup(group)">
+                  </div>
+                  <div>
+                    <div class="tag-edit-label">Node CSS — applied to the &lt;rect&gt; of the graph node</div>
+                    <textarea v-model="tag.nodeCSS" class="css-textarea" @blur="saveGroupAndInject(group)" placeholder="stroke: #e3b341 !important; stroke-width: 3px !important;&#10;fill: rgba(227,179,65,0.2) !important;"></textarea>
+                  </div>
+                  <div>
+                    <div class="tag-edit-label">Label CSS — applied to the tag label in the doc panel</div>
+                    <textarea v-model="tag.labelCSS" class="css-textarea" @blur="saveGroup(group)" placeholder="background: #e3b341; color: #000; padding: 1px 6px; border-radius: 3px;"></textarea>
+                  </div>
+                </div>
+              </div>
+              <button class="add-btn" @click="addTag(group)">+ Add tag</button>
+            </div>
+          </div>
+
+          <button class="add-btn" style="margin-top:4px" @click="addGroup">+ Add tag group</button>
+        </div>
+
+        <!-- ── HTTP Headers tab ── -->
+        <div v-if="configTab === 'headers'">
+          <div class="section-subtitle">
+            Extra HTTP headers sent with every server request (e.g. for user identification or proxy auth).
+          </div>
+          <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px">
+            <thead>
+              <tr style="color:var(--text-dim)">
+                <th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)">Header name</th>
+                <th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)">Value</th>
+                <th style="width:28px;border-bottom:1px solid var(--border)"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="h in httpHeaders" :key="h.id">
+                <td style="padding:3px 6px"><input v-model="h.key" class="search-input" style="width:100%;padding:3px 6px" @blur="saveHeaders" placeholder="X-Remote-User"></td>
+                <td style="padding:3px 6px"><input v-model="h.value" class="search-input" style="width:100%;padding:3px 6px" @blur="saveHeaders" placeholder="john"></td>
+                <td style="padding:3px 6px"><button class="btn" style="color:var(--accent2)" @click="deleteHeader(h.id)">✕</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <button class="add-btn" @click="addHeader">+ Add header</button>
+          <div style="margin-top:12px;font-size:11px;color:var(--text-dim)">
+            Server sync: <strong :style="serverEnabled ? 'color:var(--accent)' : 'color:var(--accent2)'">{{ serverEnabled ? 'enabled' : 'disabled (received 403/404)' }}</strong>
+            <button v-if="!serverEnabled" class="btn" style="margin-left:8px;font-size:11px" @click="serverEnabled=true">Re-enable</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ Conflict Dialog ══════════ -->
+  <div v-if="conflictDialog" class="modal-overlay">
+    <div class="modal" style="max-width:440px">
+      <div class="modal-header">
+        <h2>Version conflict</h2>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px;margin-bottom:16px">
+          The server-persisted <strong>{{ conflictDialog.label }}</strong> differs from your local version.<br>
+          Which one do you want to keep?
+        </p>
+        <div style="display:flex;gap:8px">
+          <button class="btn" style="flex:1" @click="chooseConflict('server')">Use server version</button>
+          <button class="btn" style="flex:1" @click="chooseConflict('local')">Keep local version</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- #app -->
+
+<style id="tag-styles"></style>
+
+<script>
+// ─── Injected graph data ──────────────────────────────────────────────────────
+const GRAPH_DATA = /*__GRAPH_DATA__*/;
+
+// ─── Colour palette ───────────────────────────────────────────────────────────
+const PKG_COLORS = [
+  '#58a6ff','#f78166','#ffa657','#3fb950','#d2a8ff',
+  '#79c0ff','#ff7b72','#56d364','#e3b341','#bc8cff',
+  '#1f6feb','#da3633','#388bfd','#2ea043','#8957e5',
+];
+const pkgColorMap = {};
+let colorIdx = 0;
+function getPkgColor(pkgPath) {
+  if (!pkgColorMap[pkgPath]) pkgColorMap[pkgPath] = PKG_COLORS[colorIdx++ % PKG_COLORS.length];
+  return pkgColorMap[pkgPath];
+}
+for (const pkg of GRAPH_DATA.packages) getPkgColor(pkg.id);
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function trunc(s, n) { return s && s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
+function nodeWidth(name) { return Math.min(200, Math.max(64, (name ? name.length : 4) * 7 + 22)); }
+
+// Luminance-based text color for contrast on colored backgrounds
+function textColorFor(hex) {
+  if (!hex || !hex.startsWith('#') || hex.length < 7) return '#ffffff';
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.55 ? '#111111' : '#ffffff';
+}
+
+function uuid() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+function rectBoundary(cx, cy, hw, hh, tx, ty) {
+  const dx = tx - cx, dy = ty - cy;
+  if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) return [cx + hw, cy];
+  const sx = Math.abs(dx) > 0.001 ? hw / Math.abs(dx) : 1e9;
+  const sy = Math.abs(dy) > 0.001 ? hh / Math.abs(dy) : 1e9;
+  return [cx + dx * Math.min(sx, sy), cy + dy * Math.min(sx, sy)];
+}
+
+function hullPath(pts, padding) {
+  if (!pts.length) return null;
+  if (pts.length === 1) {
+    const [x, y] = pts[0]; const r = padding + 20;
+    return `M${x},${y-r} a${r},${r} 0 1,0 0.001,0 Z`;
+  }
+  const padded = [];
+  for (const [x, y] of pts)
+    for (let a = 0; a < 8; a++) padded.push([x + padding * Math.cos(a/8*2*Math.PI), y + padding * Math.sin(a/8*2*Math.PI)]);
+  const hull = d3.polygonHull(padded);
+  return hull ? 'M' + hull.map(p => p.join(',')).join('L') + 'Z' : null;
+}
+
+function commonPathPrefix(paths) {
+  if (!paths.length) return '';
+  let prefix = paths[0];
+  for (const p of paths.slice(1)) {
+    while (prefix !== '' && !p.startsWith(prefix + '/') && p !== prefix) {
+      const i = prefix.lastIndexOf('/');
+      if (i < 0) { prefix = ''; break; }
+      prefix = prefix.slice(0, i);
+    }
+  }
+  return prefix;
+}
+
+function buildPkgTree(packages) {
+  if (!packages.length) return [];
+  const prefix = commonPathPrefix(packages.map(p => p.id));
+  const stripLen = prefix ? prefix.length + 1 : 0;
+  const root = { children: {} };
+  for (const pkg of packages) {
+    const parts = (pkg.id.slice(stripLen) || pkg.id).split('/').filter(Boolean);
+    let node = root, acc = prefix;
+    for (const part of parts) {
+      acc = acc ? acc + '/' + part : part;
+      if (!node.children[part]) node.children[part] = { children: {}, pkg: null, label: part, fullPath: acc };
+      node = node.children[part];
+    }
+    node.pkg = pkg;
+  }
+  function collapse(node) {
+    for (const key of Object.keys(node.children)) {
+      const child = node.children[key];
+      collapse(child);
+      while (!child.pkg && Object.keys(child.children).length === 1) {
+        const [, grand] = Object.entries(child.children)[0];
+        child.label = child.label + '/' + grand.label;
+        child.fullPath = grand.fullPath; child.pkg = grand.pkg; child.children = grand.children;
+      }
+    }
+  }
+  collapse(root);
+  function flatten(node, level) {
+    const result = [];
+    for (const child of Object.values(node.children)) {
+      // item.type = 'pkg' for package rows (leaf or intermediate with a pkg attached)
+      result.push({ type: 'pkg', level, label: child.label, pkg: child.pkg, path: child.fullPath });
+      if (Object.keys(child.children).length > 0) result.push(...flatten(child, level + 1));
+    }
+    return result;
+  }
+  const items = flatten(root, 0);
+  // Inject receiver-group rows for each package that has methods
+  const result = [];
+  for (const item of items) {
+    result.push(item);
+    if (!item.pkg) continue;
+    // Group functions by receiverType (non-empty)
+    const groups = {};
+    for (const fn of item.pkg.functions) {
+      if (!fn.receiverType) continue;
+      const base = fn.receiverType.replace(/^\*/, '');
+      if (!groups[base]) groups[base] = { isInterface: fn.isInterface, fns: [] };
+      groups[base].fns.push(fn);
+    }
+    for (const [recv, g] of Object.entries(groups).sort((a,b) => a[0].localeCompare(b[0]))) {
+      result.push({
+        type: 'receiver',
+        level: item.level + 1,
+        label: recv,
+        isInterface: g.isInterface,
+        pkgId: item.pkg.id,
+        path: item.pkg.id + '::' + recv,
+      });
+    }
+  }
+  return result;
+}
+
+function computeVisibleSet(selectedId, depth, functionMap, graphData) {
+  if (!depth || !selectedId) return null;
+  const fn = functionMap[selectedId]; if (!fn) return null;
+  const visible = new Set(), visited = new Set([selectedId]);
+  const queue = [{ id: selectedId, d: 0 }];
+  while (queue.length) {
+    const { id, d } = queue.shift(); visible.add(id);
+    if (d >= depth) continue;
+    const node = functionMap[id]; if (!node) continue;
+    for (const cid of [...(node.callerIds||[]), ...(node.calleeIds||[])]) {
+      if (!visited.has(cid) && functionMap[cid]) { visited.add(cid); queue.push({ id: cid, d: d+1 }); }
+    }
+  }
+  for (const pkg of graphData.packages)
+    if (pkg.id === fn.pkgPath) for (const f of pkg.functions) visible.add(f.id);
+  // Also include interface method nodes whose concrete implementation is visible
+  for (const ie of (graphData.implementEdges || [])) {
+    if (visible.has(ie.concreteMethod)) visible.add(ie.interfaceMethod);
+  }
+  return visible;
+}
+
+function setsEqual(a, b) {
+  if (a === b) return true;
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+
+// ─── IndexedDB wrapper ────────────────────────────────────────────────────────
+class TagDB {
+  constructor() { this._db = null; }
+
+  open() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open('go-graph-doc', 3);
+      req.onupgradeneeded = e => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('tagGroups'))       db.createObjectStore('tagGroups',       { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('projectSettings')) db.createObjectStore('projectSettings', { keyPath: 'projectId' });
+        if (!db.objectStoreNames.contains('nodeTags'))        db.createObjectStore('nodeTags',        { keyPath: 'key' });
+        if (!db.objectStoreNames.contains('viewState'))       db.createObjectStore('viewState',       { keyPath: 'projectId' });
+        if (!db.objectStoreNames.contains('httpHeaders'))     db.createObjectStore('httpHeaders',     { keyPath: 'id' });
+      };
+      req.onsuccess = e => { this._db = e.target.result; resolve(); };
+      req.onerror  = e => reject(e.target.error);
+    });
+  }
+
+  _tx(store, mode, fn) {
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction(store, mode);
+      const req = fn(tx.objectStore(store));
+      req.onsuccess = () => resolve(req.result);
+      req.onerror  = () => reject(req.error);
+    });
+  }
+
+  getAll(store)        { return this._tx(store, 'readonly',  s => s.getAll()); }
+  get(store, key)      { return this._tx(store, 'readonly',  s => s.get(key)); }
+  put(store, value)    { return this._tx(store, 'readwrite', s => s.put(value)); }
+  delete(store, key)   { return this._tx(store, 'readwrite', s => s.delete(key)); }
+}
+
+// ─── Graph Renderer ───────────────────────────────────────────────────────────
+const NODE_H = 28;
+
+class GraphRenderer {
+  constructor(svgEl, graphData, onNodeClick) {
+    this.svgEl = svgEl; this.graphData = graphData; this.onNodeClick = onNodeClick;
+    this.layout = 'layered'; this.simulation = null; this.zoom = null; this.g = null;
+    this.nodes = []; this.links = []; this.nodeIndex = {};
+    this.linkEls = null; this.nodeEls = null; this.hullPaths = null; this.hullLabels = null;
+    this.selectedId = null; this.showGoEdges = true; this.visibleSet = null;
+    this.paused = false;
+    this.savedPositions = {}; // nodeId → {x, y}  — persisted across layout switches
+    this.onSimEnd = null;     // callback when simulation converges
+  }
+
+  init() {
+    const svgEl = this.svgEl, svg = d3.select(svgEl);
+    const W = svgEl.clientWidth || 800, H = svgEl.clientHeight || 600;
+    svg.selectAll('*').remove();
+
+    const defs = svg.append('defs');
+    const mkArrow = (id, color) =>
+      defs.append('marker').attr('id',id).attr('viewBox','0 -4 8 8')
+        .attr('refX',8).attr('refY',0).attr('markerWidth',5).attr('markerHeight',5).attr('orient','auto')
+        .append('path').attr('d','M0,-4L8,0L0,4').attr('fill',color);
+    mkArrow('arrow-call','#888'); mkArrow('arrow-goroutine','#ffa657'); mkArrow('arrow-call-hi','#58a6ff');
+    mkArrow('arrow-impl','#c792ea'); mkArrow('arrow-impl-hi','#e0b0ff');
+
+    this.zoom = d3.zoom().scaleExtent([0.03, 8]).on('zoom', ev => this.g.attr('transform', ev.transform));
+    svg.call(this.zoom); svg.on('dblclick.zoom', null);
+    this.g = svg.append('g');
+
+    this.nodes = []; this.nodeIndex = {};
+    for (const pkg of this.graphData.packages) {
+      const color = getPkgColor(pkg.id);
+      for (const fn of pkg.functions) {
+        const label = fn.receiverType ? fn.receiverType.replace(/^\*/,'') + '.' + fn.name : fn.name;
+        const node = { ...fn, x: W/2+(Math.random()-.5)*100, y: H/2+(Math.random()-.5)*100, color, _w: nodeWidth(label) };
+        this.nodes.push(node); this.nodeIndex[fn.id] = node;
+      }
+    }
+    this.links = this.graphData.edges
+      .filter(e => this.nodeIndex[e.from] && this.nodeIndex[e.to])
+      .map(e => ({ source: this.nodeIndex[e.from], target: this.nodeIndex[e.to], isGoroutine: e.isGoroutine, isImpl: false }));
+    // Append implement edges as a separate link type
+    for (const ie of (this.graphData.implementEdges || [])) {
+      if (this.nodeIndex[ie.interfaceMethod] && this.nodeIndex[ie.concreteMethod]) {
+        this.links.push({ source: this.nodeIndex[ie.interfaceMethod], target: this.nodeIndex[ie.concreteMethod], isGoroutine: false, isImpl: true });
+      }
+    }
+
+    this.hullLayer = this.g.append('g').attr('class','hull-layer');
+    this.linkLayer = this.g.append('g').attr('class','link-layer');
+    this.nodeLayer = this.g.append('g').attr('class','node-layer');
+
+    this._buildHulls(); this._buildLinks(); this._buildNodes();
+
+    new ResizeObserver(() => {
+      if (this.layout === 'force' && this.simulation && !this.paused) {
+        this.simulation.force('center', d3.forceCenter(svgEl.clientWidth/2, svgEl.clientHeight/2));
+        this.simulation.alpha(0.1).restart();
+      }
+    }).observe(svgEl);
+
+    this.setLayout('layered');
+  }
+
+  _buildHulls() {
+    const pkgs = this.graphData.packages.map(p => ({ id: p.id, color: getPkgColor(p.id) }));
+    this.hullPaths = this.hullLayer.selectAll('path').data(pkgs).enter().append('path')
+      .attr('class','pkg-hull').attr('fill',d=>d.color+'18').attr('stroke',d=>d.color+'55').attr('stroke-width',2);
+    this.hullLabels = this.hullLayer.selectAll('text').data(pkgs).enter().append('text')
+      .attr('class','pkg-label')
+      .attr('text-anchor','middle')
+      .text(d => { const p = this.graphData.packages.find(p=>p.id===d.id); return p ? p.name : d.id; })
+      .style('fill',d=>d.color).style('opacity',0.7);
+  }
+
+  _buildLinks() {
+    this.linkEls = this.linkLayer.selectAll('line').data(this.links).enter().append('line')
+      .attr('class','link-line')
+      .attr('stroke', d => d.isImpl ? '#c792ea' : d.isGoroutine ? '#ffa657' : '#555')
+      .attr('stroke-dasharray', d => d.isImpl ? '5,4' : d.isGoroutine ? '6,3' : null)
+      .attr('stroke-width', d => d.isImpl ? 1.5 : 1)
+      .attr('marker-end', d => d.isImpl ? 'url(#arrow-impl)' : d.isGoroutine ? 'url(#arrow-goroutine)' : 'url(#arrow-call)')
+      .attr('opacity', d => d.isImpl ? 0.6 : 0.8);
+  }
+
+  _buildNodes() {
+    const self = this;
+    this.nodeEls = this.nodeLayer.selectAll('g').data(this.nodes).enter().append('g')
+      .attr('class','node').style('cursor','pointer')
+      .on('click', function(ev, d) { ev.stopPropagation(); self.onNodeClick(d.id); })
+      .call(d3.drag()
+        .on('start', (ev,d) => {
+          d._dragStartX = ev.x; d._dragStartY = ev.y;
+          d._dragging = false;
+          d.fx = d.x; d.fy = d.y;
+        })
+        .on('drag', (ev,d) => {
+          const dx = ev.x - d._dragStartX, dy = ev.y - d._dragStartY;
+          if (!d._dragging && dx*dx + dy*dy > 25) {
+            d._dragging = true;
+            if (this.simulation && !this.paused) this.simulation.alphaTarget(0.3).restart();
+          }
+          if (!d._dragging) return;
+          d.fx = ev.x; d.fy = ev.y;
+          d.x  = ev.x; d.y  = ev.y;
+          if (!this.simulation || this.paused) this._tick();
+        })
+        .on('end', (ev,d) => {
+          if (d._dragging && !ev.active && this.simulation && !this.paused) this.simulation.alphaTarget(0);
+          d.fx = null; d.fy = null;
+          d._dragging = false;
+        })
+      );
+
+    this.nodeEls.append('rect')
+      .attr('class','node-rect')
+      .attr('width', d => d._w).attr('height', NODE_H)
+      .attr('x', d => -d._w/2).attr('y', -NODE_H/2).attr('rx', 5)
+      .attr('fill', d => d.color).attr('stroke', d => d.isInterface ? '#c792ea' : '#30363d')
+      .attr('stroke-width', d => d.isInterface ? 2 : 1.5)
+      .attr('stroke-dasharray', d => d.isInterface ? '4,3' : null)
+      .attr('opacity', d => d.isInterface ? 0.65 : 1);
+
+    this.nodeEls.append('text')
+      .attr('class','node-label').attr('dy','0.35em')
+      .attr('fill', d => textColorFor(d.color))
+      .text(d => {
+        const label = d.receiverType ? d.receiverType.replace(/^\*/,'') + '.' + d.name : d.name;
+        return trunc(label, Math.floor(d._w/7));
+      });
+
+    this.nodeEls.append('title').text(d => d.signature || d.id);
+  }
+
+  // Update CSS classes on nodes (called from Vue when tag state changes)
+  updateNodeClasses(getClassesFn) {
+    if (!this.nodeEls) return;
+    this.nodeEls.attr('class', d => getClassesFn(d.id));
+  }
+
+  setLayout(layout) {
+    this.layout = layout;
+    if (this.simulation) { this.simulation.stop(); this.simulation = null; }
+    for (const n of this.nodes) { n.fx = null; n.fy = null; }
+    if (layout === 'force')   this._layoutForce();
+    else if (layout === 'radial')   this._layoutRadial();
+    else if (layout === 'layered')  this._layoutLayered(this.selectedId);
+  }
+
+  _computeLayeredPositions() {
+    const W = this.svgEl.clientWidth, H = this.svgEl.clientHeight;
+    const visNodes = this._visNodes(), inDeg = {}, adj = {};
+    for (const n of visNodes) { inDeg[n.id]=0; adj[n.id]=[]; }
+    for (const l of this._visLinks(new Set(visNodes.map(n=>n.id)))) {
+      const s = l.source.id||l.source, t = l.target.id||l.target;
+      if(inDeg[t]!==undefined) inDeg[t]++;
+      if(adj[s]) adj[s].push(t);
+    }
+    const queue = visNodes.filter(n=>inDeg[n.id]===0), layers = [], placed = new Set();
+    while (queue.length) {
+      const layer=[...queue]; queue.length=0; layers.push(layer);
+      for(const n of layer) { placed.add(n.id); for(const nid of adj[n.id]) { inDeg[nid]--; if(inDeg[nid]===0&&!placed.has(nid)){const nd=this.nodeIndex[nid];if(nd)queue.push(nd);} } }
+    }
+    const remaining = visNodes.filter(n=>!placed.has(n.id));
+    if(remaining.length) layers.push(remaining);
+    const layerH = Math.min(120,(H-80)/Math.max(layers.length,1));
+    layers.forEach((layer,li) => {
+      const y=50+li*layerH, spacing=(W-80)/Math.max(layer.length,1);
+      layer.forEach((node,i) => { node.x=40+spacing*(i+0.5); node.y=y; });
+    });
+  }
+
+  _visNodes() { return this.nodes.filter(n => !this.visibleSet || this.visibleSet.has(n.id)); }
+
+  _visLinks(visNodeIds) {
+    return this.links.filter(l => {
+      const s=l.source.id||l.source, t=l.target.id||l.target;
+      return visNodeIds.has(s) && visNodeIds.has(t);
+    });
+  }
+
+  _layoutForce() {
+    // Always stop any running simulation first — avoids two sims fighting each other
+    if (this.simulation) { this.simulation.stop(); this.simulation = null; }
+
+    const W = this.svgEl.clientWidth, H = this.svgEl.clientHeight;
+
+    // Initialize positions: saved positions take priority over layered
+    const hasSaved = Object.keys(this.savedPositions).length > 0;
+    if (hasSaved) {
+      for (const n of this.nodes) {
+        const s = this.savedPositions[n.id];
+        if (s) { n.x = s.x; n.y = s.y; }
+        // nodes absent from savedPositions keep their current x/y
+      }
+    } else {
+      this._computeLayeredPositions();
+    }
+
+    if (this.paused) { this._tick(); return; }
+
+    this.simulation = d3.forceSimulation(this.nodes)
+      .force('link', d3.forceLink(this.links).id(d=>d.id).distance(100).strength(0.3))
+      .force('charge', d3.forceManyBody().strength(-400))
+      .force('center', d3.forceCenter(W/2,H/2))
+      .force('collision', d3.forceCollide(d=>d._w/2+8))
+      .force('pkg', this._pkgForce())
+      .force('dag', this._dagForce())
+      .on('tick', () => this._tick())
+      .on('end',  () => { this._snapshotPositions(); if (this.onSimEnd) this.onSimEnd(); });
+    this.simulation.alpha(hasSaved ? 0.3 : 0.8).restart();
+  }
+
+  _snapshotPositions() {
+    for (const n of this.nodes) this.savedPositions[n.id] = { x: n.x, y: n.y };
+  }
+
+  setPaused(val) {
+    this.paused = val;
+    if (this.layout !== 'force') return;
+    if (val) {
+      if (this.simulation) this.simulation.stop();
+      this._snapshotPositions();
+    } else {
+      if (this.simulation) this.simulation.alpha(0.3).restart();
+      else this._layoutForce();
+    }
+  }
+
+  resetPositionsToLayered() {
+    this.savedPositions = {};
+    if (this.simulation) { this.simulation.stop(); this.simulation = null; }
+    for (const n of this.nodes) { n.fx = null; n.fy = null; }
+    this._computeLayeredPositions();
+    if (this.layout === 'force') this._layoutForce();
+    else this._tick();
+  }
+
+  _pkgForce() {
+    return () => {
+      const c = {};
+      for(const n of this.nodes) { if(!c[n.pkgPath]) c[n.pkgPath]={x:0,y:0,count:0}; c[n.pkgPath].x+=n.x; c[n.pkgPath].y+=n.y; c[n.pkgPath].count++; }
+      for(const k of Object.keys(c)) { c[k].x/=c[k].count; c[k].y/=c[k].count; }
+      for(const n of this.nodes) { const p=c[n.pkgPath]; n.vx+=(p.x-n.x)*0.02; n.vy+=(p.y-n.y)*0.02; }
+    };
+  }
+
+  _dagForce() {
+    const k = 0.08, minDy = 60;
+    return () => {
+      for (const l of this.links) {
+        const dy = l.target.y - l.source.y;
+        if (dy < minDy) {
+          const f = (minDy - dy) * k;
+          l.source.vy -= f;
+          l.target.vy += f;
+        }
+      }
+    };
+  }
+
+  _layoutRadial() {
+    if (this.simulation) { this.simulation.stop(); this.simulation = null; }
+    const W=this.svgEl.clientWidth, H=this.svgEl.clientHeight, cx=W/2, cy=H/2;
+    const root=(this.selectedId&&this.nodeIndex[this.selectedId])||this.nodes[0]; if(!root)return;
+    const visited=new Set(), levels=[], queue=[root]; visited.add(root.id);
+    while(queue.length) {
+      const cur=[...queue]; queue.length=0; levels.push(cur);
+      for(const node of cur) for(const l of this.links) { if(l.source===node&&!visited.has(l.target.id)){visited.add(l.target.id);queue.push(l.target);} }
+    }
+    const ringR=130;
+    levels.forEach((level,depth) => {
+      const r=depth*ringR+40;
+      level.forEach((node,i) => { const a=(2*Math.PI*i/level.length)-Math.PI/2; node.fx=cx+r*Math.cos(a); node.fy=cy+r*Math.sin(a); });
+    });
+    const unvisited=this.nodes.filter(n=>!visited.has(n.id)), outerR=levels.length*ringR+80;
+    unvisited.forEach((n,i) => { const a=2*Math.PI*i/Math.max(unvisited.length,1); n.fx=cx+outerR*Math.cos(a); n.fy=cy+outerR*Math.sin(a); });
+    this._copyFixedToPos();
+    this._tick();
+  }
+
+  _layoutLayered(focusId=null) {
+    if (this.simulation) { this.simulation.stop(); this.simulation = null; }
+    const W=this.svgEl.clientWidth, H=this.svgEl.clientHeight;
+    const visNodes=this._visNodes(), visNodeIds=new Set(visNodes.map(n=>n.id));
+
+    if(focusId&&this.nodeIndex[focusId]&&visNodeIds.has(focusId)) {
+      const focus=this.nodeIndex[focusId];
+      const callerAdj={}, calleeAdj={};
+      for(const n of visNodes) { callerAdj[n.id]=(n.callerIds||[]).filter(id=>visNodeIds.has(id)); calleeAdj[n.id]=(n.calleeIds||[]).filter(id=>visNodeIds.has(id)); }
+      const placed=new Set([focusId]), callerLayers=[], calleeLayers=[];
+
+      let frontier=callerAdj[focusId].filter(id=>!placed.has(id)); frontier.forEach(id=>placed.add(id));
+      while(frontier.length) {
+        callerLayers.push(frontier.map(id=>this.nodeIndex[id]).filter(Boolean));
+        const next=[];
+        for(const id of frontier) for(const cid of(callerAdj[id]||[])) if(!placed.has(cid)){placed.add(cid);next.push(cid);}
+        frontier=next;
+      }
+      frontier=calleeAdj[focusId].filter(id=>!placed.has(id)); frontier.forEach(id=>placed.add(id));
+      while(frontier.length) {
+        calleeLayers.push(frontier.map(id=>this.nodeIndex[id]).filter(Boolean));
+        const next=[];
+        for(const id of frontier) for(const cid of(calleeAdj[id]||[])) if(!placed.has(cid)){placed.add(cid);next.push(cid);}
+        frontier=next;
+      }
+      const unplaced=visNodes.filter(n=>!placed.has(n.id));
+      const totalRows=callerLayers.length+1+calleeLayers.length+(unplaced.length>0?1:0);
+      const layerH=Math.min(100,(H-80)/Math.max(totalRows,1)), centerY=H/2;
+
+      focus.fx=W/2; focus.fy=centerY;
+      callerLayers.forEach((layer,i) => { const y=centerY-(i+1)*layerH, sp=(W-80)/Math.max(layer.length,1); layer.forEach((n,j)=>{n.fx=40+sp*(j+0.5);n.fy=y;}); });
+      calleeLayers.forEach((layer,i) => { const y=centerY+(i+1)*layerH, sp=(W-80)/Math.max(layer.length,1); layer.forEach((n,j)=>{n.fx=40+sp*(j+0.5);n.fy=y;}); });
+      if(unplaced.length) { const y=centerY+(calleeLayers.length+1)*layerH, sp=(W-80)/Math.max(unplaced.length,1); unplaced.forEach((n,j)=>{n.fx=40+sp*(j+0.5);n.fy=y;}); }
+    } else {
+      const inDeg={}, adj={};
+      for(const n of visNodes) { inDeg[n.id]=0; adj[n.id]=[]; }
+      for(const l of this._visLinks(visNodeIds)) {
+        const s=typeof l.source==='object'?l.source.id:l.source, t=typeof l.target==='object'?l.target.id:l.target;
+        if(inDeg[t]!==undefined) inDeg[t]++;
+        if(adj[s]) adj[s].push(t);
+      }
+      const queue=visNodes.filter(n=>inDeg[n.id]===0), layers=[], placed=new Set();
+      while(queue.length) {
+        const layer=[...queue]; queue.length=0; layers.push(layer);
+        for(const n of layer) { placed.add(n.id); for(const nid of adj[n.id]){inDeg[nid]--;if(inDeg[nid]===0&&!placed.has(nid)){const nd=this.nodeIndex[nid];if(nd)queue.push(nd);}} }
+      }
+      const remaining=visNodes.filter(n=>!placed.has(n.id)); if(remaining.length) layers.push(remaining);
+      const layerH=Math.min(120,(H-80)/Math.max(layers.length,1));
+      layers.forEach((layer,li) => { const y=50+li*layerH, sp=(W-80)/Math.max(layer.length,1); layer.forEach((n,i)=>{n.fx=40+sp*(i+0.5);n.fy=y;}); });
+    }
+    this._copyFixedToPos();
+    this._tick();
+  }
+
+  // Copy fx/fy → x/y for static layouts (no simulation running)
+  _copyFixedToPos() {
+    for (const n of this.nodes) {
+      if (n.fx != null) n.x = n.fx;
+      if (n.fy != null) n.y = n.fy;
+    }
+  }
+
+  _tick() {
+    const nh2=NODE_H/2+2, goVisible=this.showGoEdges, vs=this.visibleSet;
+    for(const l of this.links) {
+      const [x1,y1]=rectBoundary(l.source.x,l.source.y,l.source._w/2+2,nh2,l.target.x,l.target.y);
+      const [x2,y2]=rectBoundary(l.target.x,l.target.y,l.target._w/2+2,nh2,l.source.x,l.source.y);
+      l._x1=x1; l._y1=y1; l._x2=x2; l._y2=y2;
+    }
+    this.linkEls
+      .attr('x1',d=>d._x1).attr('y1',d=>d._y1).attr('x2',d=>d._x2).attr('y2',d=>d._y2)
+      .attr('display', d => {
+        if(!goVisible&&d.isGoroutine) return 'none';
+        if(vs) { const s=d.source.id||d.source, t=d.target.id||d.target; if(!vs.has(s)||!vs.has(t)) return 'none'; }
+        return null;
+      });
+    this.nodeEls.attr('transform',d=>`translate(${d.x},${d.y})`).attr('display',d=>(vs&&!vs.has(d.id))?'none':null);
+    this._updateHulls();
+  }
+
+  _updateHulls() {
+    const vs = this.visibleSet;
+    const pkgNodes = (id) => this.nodes.filter(n =>
+      n.pkgPath === id && (!vs || vs.has(n.id))
+    );
+
+    this.hullPaths.attr('d', d => {
+      const pts = pkgNodes(d.id).map(n => [n.x, n.y]);
+      return hullPath(pts, 30);
+    });
+
+    this.hullLabels.attr('transform', d => {
+      const ns = pkgNodes(d.id);
+      if (!ns.length) return 'translate(-9999,-9999)';
+      // Center X on centroid, Y above the topmost node
+      const cx = ns.reduce((s, n) => s + n.x, 0) / ns.length;
+      const minY = Math.min(...ns.map(n => n.y));
+      return `translate(${cx},${minY - 22})`;
+    });
+  }
+
+  // skipLayout: caller will handle layout update itself (avoids double-calc for layered)
+  setVisibleNodes(vs, skipLayout = false) {
+    const changed = !setsEqual(this.visibleSet, vs);
+    this.visibleSet = vs;
+    if (skipLayout) { this._tick(); return; }
+    if (!changed)   { this._tick(); return; }
+    // Visible set actually changed — recalculate appropriate layout
+    if (this.layout === 'layered') {
+      this._layoutLayered(this.selectedId);
+    } else if (this.layout === 'force') {
+      if (this.paused) this._tick();
+      else this._layoutForce();
+    } else {
+      this._tick();
+    }
+  }
+
+  centerNode(id) {
+    const node=this.nodeIndex[id]; if(!node) return;
+    const W=this.svgEl.clientWidth, H=this.svgEl.clientHeight, t=d3.zoomTransform(this.svgEl);
+    d3.select(this.svgEl).transition().duration(500).call(
+      this.zoom.transform,
+      d3.zoomIdentity.translate(W/2-t.k*node.x, H/2-t.k*node.y).scale(t.k)
+    );
+  }
+
+  highlightNode(id) {
+    this.selectedId=id;
+    this.nodeEls.select('rect')
+      .attr('stroke', d => d.id===id ? '#fff' : '#30363d')
+      .attr('stroke-width', d => d.id===id ? 2.5 : 1.5)
+      .attr('filter', d => d.id===id ? 'brightness(1.25)' : null);
+    this.nodeEls.select('text')
+      .attr('fill', d => d.id===id ? textColorFor(d.color) : textColorFor(d.color));
+    this.linkEls
+      .attr('stroke', d => {
+        const s=d.source.id||d.source, t=d.target.id||d.target, active=s===id||t===id;
+        if (d.isImpl)      return active ? '#e0b0ff' : '#c792ea44';
+        if (d.isGoroutine) return active ? '#ffa657' : '#ffa65740';
+        return active ? '#58a6ff' : '#44444499';
+      })
+      .attr('stroke-width', d => { const s=d.source.id||d.source,t=d.target.id||d.target; return(s===id||t===id)?2.5:(d.isImpl?1.5:1); })
+      .attr('marker-end', d => {
+        const s=d.source.id||d.source,t=d.target.id||d.target,active=s===id||t===id;
+        if (d.isImpl)      return active ? 'url(#arrow-impl-hi)' : 'url(#arrow-impl)';
+        if (d.isGoroutine) return 'url(#arrow-goroutine)';
+        return active ? 'url(#arrow-call-hi)' : 'url(#arrow-call)';
+      });
+  }
+
+  resetZoom() { d3.select(this.svgEl).transition().duration(500).call(this.zoom.transform,d3.zoomIdentity); }
+  setShowGoEdges(v) { this.showGoEdges=v; this._tick(); }
+}
+
+// ─── Vue App ──────────────────────────────────────────────────────────────────
+const { createApp } = Vue;
+
+createApp({
+  data() {
+    const allExpanded = {};
+    const prefix = commonPathPrefix(GRAPH_DATA.packages.map(p=>p.id));
+    const stripLen = prefix ? prefix.length+1 : 0;
+    for(const pkg of GRAPH_DATA.packages) {
+      const parts=(pkg.id.slice(stripLen)||pkg.id).split('/').filter(Boolean);
+      let acc=prefix;
+      for(const part of parts) { acc=acc?acc+'/'+part:part; allExpanded[acc]=true; }
+    }
+    return {
+      graphData: GRAPH_DATA,
+      selectedId: null,
+      history: [], historyIndex: -1,
+      search: '',
+      expandedNodes: allExpanded,
+      leftWidth: 22, rightWidth: 22,
+      resizing: null, resizeStartX: 0,
+      layout: 'layered',
+      showGoEdges: true,
+      depth: 0,
+      renderer: null,
+      // Config modal
+      showConfig: false,
+      configTab: 'tags',
+      // Tag system
+      tagGroups: [],          // [{ id, name, tags: [{ id, name, nodeCSS, labelCSS, _expanded }], _editing }]
+      projectSettings: null,  // { projectId, enabledGroups: [id,...] }
+      nodeTags: {},           // key: `${projectId}:${nodeId}` → [tagId,...]
+      db: null,
+      // Server sync
+      httpHeaders: [],        // [{ id, key, value }]
+      serverEnabled: true,
+      serverSynced: false,
+      _saveTimer: null,
+      conflictDialog: null,   // { label, resolve }
+    };
+  },
+
+  computed: {
+    paused() { return this.renderer ? this.renderer.paused : false; },
+    functionMap() {
+      const m={};
+      for(const pkg of this.graphData.packages) for(const fn of pkg.functions) m[fn.id]=fn;
+      return m;
+    },
+    selectedFunction() { return this.selectedId ? this.functionMap[this.selectedId] : null; },
+    totalFuncs() { return this.graphData.packages.reduce((s,p)=>s+p.functions.length,0); },
+    visibleCount() {
+      if(!this.depth||!this.selectedId) return this.totalFuncs;
+      const vs=computeVisibleSet(this.selectedId,this.depth,this.functionMap,this.graphData);
+      return vs?vs.size:this.totalFuncs;
+    },
+    flatTree() {
+      const pkgs = this.search
+        ? (() => { const q=this.search.toLowerCase(); return this.graphData.packages.filter(pkg=>
+            pkg.id.toLowerCase().includes(q)||pkg.name.toLowerCase().includes(q)||
+            pkg.functions.some(f=>f.name.toLowerCase().includes(q))); })()
+        : this.graphData.packages;
+      const all = buildPkgTree(pkgs);
+      // Filter out items whose ancestor is collapsed
+      const result = [];
+      let skipAboveLevel = -1;
+      for (const item of all) {
+        if (skipAboveLevel >= 0 && item.level > skipAboveLevel) continue;
+        skipAboveLevel = -1;
+        result.push(item);
+        if (this.expandedNodes[item.path] === false) skipAboveLevel = item.level;
+      }
+      return result;
+    },
+    projectId() { return this.graphData.modulePath || 'default'; },
+    enabledTagGroups() {
+      if(!this.projectSettings) return [];
+      return this.tagGroups.filter(g => this.projectSettings.enabledGroups.includes(g.id));
+    },
+  },
+
+  methods: {
+    pkgColor(id) { return getPkgColor(id); },
+    fnLabel(id) {
+      const f = this.functionMap[id];
+      if (!f) return this.shortId(id);
+      return f.receiverType ? f.receiverType.replace(/^\*/,'') + '.' + f.name : f.name;
+    },
+    nodeLabelStyle(id) {
+      const key = `${this.projectId}:${id}`;
+      const tagIds = this.nodeTags[key] || [];
+      const enabledIds = new Set(this.projectSettings?.enabledGroups || []);
+      for (const g of this.tagGroups) {
+        if (!enabledIds.has(g.id)) continue;
+        for (const t of g.tags) {
+          if (tagIds.includes(t.id) && t.labelCSS) return t.labelCSS;
+        }
+      }
+      return '';
+    },
+    implConcretes(ifaceMethodId) {
+      return (this.graphData.implementEdges || [])
+        .filter(e => e.interfaceMethod === ifaceMethodId)
+        .map(e => e.concreteMethod);
+    },
+    implInterfaces(concMethodId) {
+      return (this.graphData.implementEdges || [])
+        .filter(e => e.concreteMethod === concMethodId)
+        .map(e => e.interfaceMethod);
+    },
+    filteredFunctions(pkg) {
+      if(!this.search) return pkg.functions;
+      const q=this.search.toLowerCase();
+      return pkg.functions.filter(f=>f.name.toLowerCase().includes(q));
+    },
+    freeFunctions(pkg) {
+      const fns = this.filteredFunctions(pkg);
+      return fns.filter(f => !f.receiverType);
+    },
+    receiverFunctions(pkgId, recv) {
+      const pkg = this.graphData.packages.find(p => p.id === pkgId);
+      if (!pkg) return [];
+      const fns = this.filteredFunctions(pkg);
+      return fns.filter(f => f.receiverType && f.receiverType.replace(/^\*/, '') === recv);
+    },
+    onSearch() {
+      if(this.search) {
+        const q=this.search.toLowerCase();
+        for(const pkg of this.graphData.packages)
+          if(pkg.functions.some(f=>f.name.toLowerCase().includes(q))) this.expandedNodes[pkg.id]=true;
+      }
+    },
+    toggleNode(path) { this.expandedNodes[path]=this.expandedNodes[path]===false?true:false; },
+
+    selectFunction(id) {
+      if(!this.functionMap[id]) return;
+      if(this.historyIndex<this.history.length-1) this.history=this.history.slice(0,this.historyIndex+1);
+      this.history.push(id); this.historyIndex=this.history.length-1; this.selectedId=id;
+    },
+    navigateHistory(dir) {
+      const newIdx=this.historyIndex+dir;
+      if(newIdx<0||newIdx>=this.history.length) return;
+      this.historyIndex=newIdx; this.selectedId=this.history[newIdx];
+    },
+
+    startResize(panel,event) {
+      this.resizing=panel; this.resizeStartX=event.clientX;
+      document.addEventListener('mousemove',this._onResize); document.addEventListener('mouseup',this._stopResize);
+    },
+    _onResize(event) {
+      const dx=event.clientX-this.resizeStartX, vw=(dx/window.innerWidth)*100;
+      if(this.resizing==='left') this.leftWidth=Math.max(0,this.leftWidth+vw);
+      else this.rightWidth=Math.max(0,this.rightWidth-vw);
+      this.resizeStartX=event.clientX;
+    },
+    _stopResize() { this.resizing=null; document.removeEventListener('mousemove',this._onResize); document.removeEventListener('mouseup',this._stopResize); },
+
+    async setLayout(l) {
+      await this.saveViewState();
+      this.layout=l;
+      this.renderer?.setLayout(l);
+    },
+    resetZoom() { this.renderer?.resetZoom(); },
+    toggleGoEdges() { this.showGoEdges=!this.showGoEdges; this.renderer?.setShowGoEdges(this.showGoEdges); },
+    changeDepth(delta) { this.depth=Math.max(0,this.depth+delta); this._applyDepthFilter(); },
+
+    _applyDepthFilter() {
+      if(!this.renderer) return;
+      const vs = computeVisibleSet(this.selectedId, this.depth, this.functionMap, this.graphData);
+      if (this.layout === 'layered') {
+        // Update visibleSet then recompute focused layout in one pass
+        this.renderer.setVisibleNodes(vs, true);
+        this.renderer._layoutLayered(this.selectedId);
+      } else {
+        // For force/radial: setVisibleNodes handles "changed?" check and restarts if needed
+        this.renderer.setVisibleNodes(vs);
+      }
+    },
+
+    async togglePause() {
+      if (!this.renderer) return;
+      this.renderer.setPaused(!this.renderer.paused);
+      await this.saveViewState();
+    },
+
+    async resetForcePositions() {
+      if (!this.renderer) return;
+      this.renderer.resetPositionsToLayered();
+      await this.saveViewState();
+    },
+
+    // ── View state persistence ──
+    async saveViewState() {
+      if (!this.db || !this.renderer) return;
+      const positions = {};
+      for (const n of this.renderer.nodes) positions[n.id] = { x: n.x, y: n.y };
+      const t = d3.zoomTransform(this.renderer.svgEl);
+      await this.db.put('viewState', {
+        projectId:     this.projectId,
+        layout:        this.layout,
+        paused:        this.paused,
+        nodePositions: positions,
+        zoom:          { k: t.k, x: t.x, y: t.y },
+      });
+      this._scheduleSave();
+    },
+
+    async loadViewState() {
+      if (!this.db || !this.renderer) return;
+      const state = await this.db.get('viewState', this.projectId);
+      if (!state) return;
+
+      // Restore saved node positions into renderer (used by _layoutForce)
+      if (state.nodePositions && Object.keys(state.nodePositions).length > 0) {
+        this.renderer.savedPositions = state.nodePositions;
+      }
+      // Restore pause state before setting layout (so _layoutForce respects it)
+      if (state.paused) this.renderer.paused = true;
+      // Restore layout (will use savedPositions)
+      if (state.layout && state.layout !== 'layered') {
+        this.layout = state.layout;
+        this.renderer.setLayout(state.layout);
+      }
+      // Restore zoom
+      if (state.zoom) {
+        const { k, x, y } = state.zoom;
+        d3.select(this.renderer.svgEl)
+          .call(this.renderer.zoom.transform, d3.zoomIdentity.translate(x, y).scale(k));
+      }
+    },
+
+    shortPath(path) { const parts=path.replace(/\\/g,'/').split('/'); return parts.slice(-3).join('/'); },
+    shortId(id) { const parts=id.split('.'); return parts[parts.length-1]||id; },
+
+    // ── Tag group enabled/disabled per project ──
+    isGroupEnabled(groupId) {
+      return this.projectSettings?.enabledGroups.includes(groupId) ?? false;
+    },
+    async toggleGroupEnabled(groupId) {
+      if(!this.projectSettings) this.projectSettings={ projectId:this.projectId, enabledGroups:[] };
+      const idx=this.projectSettings.enabledGroups.indexOf(groupId);
+      if(idx>=0) this.projectSettings.enabledGroups.splice(idx,1);
+      else this.projectSettings.enabledGroups.push(groupId);
+      await this.db.put('projectSettings', { projectId:this.projectId, enabledGroups:[...this.projectSettings.enabledGroups] });
+      this._scheduleSave();
+      this._refreshNodeClasses();
+    },
+
+    // ── Node tag assignment ──
+    nodeHasTag(nodeId, tagId) {
+      const key=`${this.projectId}:${nodeId}`;
+      return (this.nodeTags[key]||[]).includes(tagId);
+    },
+    async toggleNodeTag(nodeId, tagId) {
+      const key=`${this.projectId}:${nodeId}`;
+      const tags=[...(this.nodeTags[key]||[])];
+      const idx=tags.indexOf(tagId);
+      if(idx>=0) tags.splice(idx,1); else tags.push(tagId);
+      this.nodeTags[key]=tags;
+      await this.db.put('nodeTags',{ key, projectId:this.projectId, nodeId, tagIds:tags });
+      this._refreshNodeClasses();
+      this._scheduleSave();
+    },
+
+    // ── Tag group CRUD ──
+    async addGroup() {
+      const group={ id:uuid(), name:'New Group', tags:[], _editing:true };
+      this.tagGroups.push(group);
+      await this.db.put('tagGroups',{ id:group.id, name:group.name, tags:[] });
+    },
+    async deleteGroup(groupId) {
+      const idx=this.tagGroups.findIndex(g=>g.id===groupId);
+      if(idx>=0) this.tagGroups.splice(idx,1);
+      await this.db.delete('tagGroups',groupId);
+      this._injectTagCSS();
+      this._refreshNodeClasses();
+    },
+    startEditGroup(group) { group._editing=true; },
+    async finishEditGroup(group) {
+      group._editing=false;
+      await this.saveGroup(group);
+    },
+    async saveGroup(group) {
+      await this.db.put('tagGroups',{ id:group.id, name:group.name, tags:group.tags.map(t=>({id:t.id,name:t.name,nodeCSS:t.nodeCSS||'',labelCSS:t.labelCSS||''})) });
+      this._scheduleSave();
+    },
+    async saveGroupAndInject(group) {
+      await this.saveGroup(group);
+      this._injectTagCSS();
+    },
+
+    // ── Tag CRUD within group ──
+    async addTag(group) {
+      const tag={ id:uuid(), name:'New Tag', nodeCSS:'', labelCSS:'', _expanded:true };
+      group.tags.push(tag);
+      await this.saveGroup(group);
+    },
+    async deleteTag(group, tagId) {
+      const idx=group.tags.findIndex(t=>t.id===tagId);
+      if(idx>=0) group.tags.splice(idx,1);
+      await this.saveGroup(group);
+      this._injectTagCSS();
+      this._refreshNodeClasses();
+    },
+
+    // ── CSS injection ──
+    _injectTagCSS() {
+      let css='';
+      for(const group of this.tagGroups) {
+        for(const tag of group.tags) {
+          if(tag.nodeCSS && tag.nodeCSS.trim()) {
+            // Target the rect inside the node group carrying the tag class
+            css += `#graph-svg .node.tag-${tag.id} rect.node-rect { ${tag.nodeCSS} }\n`;
+          }
+        }
+      }
+      document.getElementById('tag-styles').textContent=css;
+    },
+
+    // Update D3 node classes based on current tag state
+    _refreshNodeClasses() {
+      if(!this.renderer) return;
+      const projectId=this.projectId;
+      const nodeTags=this.nodeTags;
+      const enabledGroupIds=new Set(this.projectSettings?.enabledGroups||[]);
+      // Build a set of tag IDs that are in enabled groups
+      const enabledTagIds=new Set();
+      for(const g of this.tagGroups) if(enabledGroupIds.has(g.id)) for(const t of g.tags) enabledTagIds.add(t.id);
+
+      this.renderer.updateNodeClasses(nodeId => {
+        const key=`${projectId}:${nodeId}`;
+        const tags=(nodeTags[key]||[]).filter(tid=>enabledTagIds.has(tid));
+        return ['node', ...tags.map(tid=>`tag-${tid}`)].join(' ');
+      });
+    },
+
+    // ── HTTP Headers CRUD ──
+    async addHeader() {
+      const h = { id: uuid(), key: '', value: '' };
+      this.httpHeaders.push(h);
+      await this.db.put('httpHeaders', h);
+    },
+    async deleteHeader(id) {
+      const idx = this.httpHeaders.findIndex(h => h.id === id);
+      if (idx >= 0) this.httpHeaders.splice(idx, 1);
+      await this.db.delete('httpHeaders', id);
+    },
+    async saveHeaders() {
+      for (const h of this.httpHeaders) await this.db.put('httpHeaders', { id: h.id, key: h.key, value: h.value });
+      this.serverEnabled = true; // re-enable on header change so user can retry
+    },
+
+    _buildHeaders() {
+      const h = {};
+      for (const entry of this.httpHeaders) if (entry.key && entry.key.trim()) h[entry.key.trim()] = entry.value;
+      return h;
+    },
+
+    // ── Server state sync ──
+    // ── Conflict dialog ──
+    _showConflictDialog(label) {
+      return new Promise(resolve => { this.conflictDialog = { label, resolve }; });
+    },
+    chooseConflict(choice) {
+      const resolve = this.conflictDialog.resolve;
+      this.conflictDialog = null;
+      resolve(choice);
+    },
+
+    _configHasData(s) { return s && (s.tagGroups?.length > 0 || Object.keys(s.nodeTags || {}).length > 0); },
+    _graphHasData(s)  { return s && s.viewState?.nodePositions && Object.keys(s.viewState.nodePositions).length > 0; },
+
+    async _fetchServerState() {
+      if (!this.serverEnabled) return;
+      try {
+        const [cfgRes, gphRes] = await Promise.all([
+          fetch('/api/config', { headers: this._buildHeaders() }),
+          fetch('/api/graph',  { headers: this._buildHeaders() }),
+        ]);
+        if (cfgRes.status === 403 || cfgRes.status === 404) { this.serverEnabled = false; return; }
+        if (!cfgRes.ok || !gphRes.ok) return;
+
+        const [serverCfg, serverGph] = await Promise.all([cfgRes.json(), gphRes.json()]);
+
+        // Config sync
+        const localCfg = await this._collectConfig();
+        const serverHasCfg = this._configHasData(serverCfg);
+        const localHasCfg  = this._configHasData(localCfg);
+        if (serverHasCfg && localHasCfg && JSON.stringify(serverCfg) !== JSON.stringify(localCfg)) {
+          const choice = await this._showConflictDialog('configuration (tag groups, node tags)');
+          if (choice === 'server') await this._applyServerConfig(serverCfg);
+          else this._scheduleSave();
+        } else if (serverHasCfg && !localHasCfg) {
+          await this._applyServerConfig(serverCfg);
+        } else if (!serverHasCfg && localHasCfg) {
+          this._scheduleSave();
+        }
+
+        // Graph sync
+        const localGph = await this._collectGraph();
+        const serverHasGph = this._graphHasData(serverGph);
+        const localHasGph  = this._graphHasData(localGph);
+        if (serverHasGph && localHasGph && JSON.stringify(serverGph) !== JSON.stringify(localGph)) {
+          const choice = await this._showConflictDialog('graph layout (positions, zoom)');
+          if (choice === 'server') await this._applyServerGraph(serverGph);
+          else this._scheduleSave();
+        } else if (serverHasGph && !localHasGph) {
+          await this._applyServerGraph(serverGph);
+        } else if (!serverHasGph && localHasGph) {
+          this._scheduleSave();
+        }
+
+        this.serverSynced = true;
+      } catch { /* silent */ }
+    },
+
+    async _applyServerConfig(state) {
+      if (!state) return;
+      if (Array.isArray(state.tagGroups) && state.tagGroups.length > 0) {
+        for (const g of state.tagGroups) await this.db.put('tagGroups', g);
+        this.tagGroups = state.tagGroups.map(g => ({ ...g, tags: (g.tags||[]).map(t => ({...t, _expanded: false})), _editing: false }));
+      }
+      if (state.projectSettings) {
+        const ps = { ...state.projectSettings, projectId: this.projectId };
+        await this.db.put('projectSettings', ps);
+        this.projectSettings = ps;
+      }
+      if (state.nodeTags && typeof state.nodeTags === 'object') {
+        const nt = {};
+        for (const [nodeId, tagIds] of Object.entries(state.nodeTags)) {
+          const key = `${this.projectId}:${nodeId}`;
+          await this.db.put('nodeTags', { key, projectId: this.projectId, nodeId, tagIds });
+          nt[key] = tagIds;
+        }
+        this.nodeTags = nt;
+      }
+      this._injectTagCSS();
+      this._refreshNodeClasses();
+    },
+
+    async _applyServerGraph(state) {
+      if (!state?.viewState) return;
+      await this.db.put('viewState', { ...state.viewState, projectId: this.projectId });
+    },
+
+    async _applyServerState(state) {
+      if (!state || typeof state !== 'object') return;
+      if (Array.isArray(state.tagGroups) && state.tagGroups.length > 0) {
+        for (const g of state.tagGroups) await this.db.put('tagGroups', g);
+        this.tagGroups = state.tagGroups.map(g => ({ ...g, tags: (g.tags||[]).map(t => ({...t, _expanded: false})), _editing: false }));
+      }
+      if (state.viewState) await this.db.put('viewState', { ...state.viewState, projectId: this.projectId });
+      if (state.projectSettings) {
+        const ps = { ...state.projectSettings, projectId: this.projectId };
+        await this.db.put('projectSettings', ps);
+        this.projectSettings = ps;
+      }
+      if (state.nodeTags && typeof state.nodeTags === 'object') {
+        const nt = {};
+        for (const [nodeId, tagIds] of Object.entries(state.nodeTags)) {
+          const key = `${this.projectId}:${nodeId}`;
+          await this.db.put('nodeTags', { key, projectId: this.projectId, nodeId, tagIds });
+          nt[key] = tagIds;
+        }
+        this.nodeTags = nt;
+      }
+      this._injectTagCSS();
+      this._refreshNodeClasses();
+    },
+
+    async _collectConfig() {
+      const tagGroups = this.tagGroups.map(g => ({ id: g.id, name: g.name, tags: g.tags.map(t => ({ id: t.id, name: t.name, nodeCSS: t.nodeCSS||'', labelCSS: t.labelCSS||'' })) }));
+      const nodeTags = {};
+      for (const [key, tagIds] of Object.entries(this.nodeTags)) {
+        const nodeId = key.startsWith(this.projectId+':') ? key.slice(this.projectId.length+1) : key;
+        nodeTags[nodeId] = tagIds;
+      }
+      return { tagGroups, projectSettings: this.projectSettings, nodeTags };
+    },
+
+    async _collectGraph() {
+      const vs = await this.db.get('viewState', this.projectId) || {};
+      return { viewState: vs };
+    },
+
+    _scheduleSave() {
+      if (!this.serverEnabled) return;
+      clearTimeout(this._saveTimer);
+      this._saveTimer = setTimeout(() => this._pushServerState(), 2000);
+    },
+
+    async _pushServerState() {
+      if (!this.serverEnabled) return;
+      try {
+        const [cfg, gph] = await Promise.all([this._collectConfig(), this._collectGraph()]);
+        const [cfgRes, gphRes] = await Promise.all([
+          fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json', ...this._buildHeaders() }, body: JSON.stringify(cfg) }),
+          fetch('/api/graph',  { method: 'PUT', headers: { 'Content-Type': 'application/json', ...this._buildHeaders() }, body: JSON.stringify(gph) }),
+        ]);
+        if (cfgRes.status === 403 || cfgRes.status === 404) { this.serverEnabled = false; return; }
+        if (cfgRes.ok && gphRes.ok) this.serverSynced = true;
+      } catch { /* silent */ }
+    },
+
+    // ── Import / Export ──
+    async _downloadJSON(data, suffix) {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = (this.projectId || 'project') + '.' + suffix + '.json';
+      a.click(); URL.revokeObjectURL(url);
+    },
+    async exportConfig() { await this._downloadJSON(await this._collectConfig(), 'config'); },
+    async exportGraph()  { await this._downloadJSON(await this._collectGraph(),  'graph');  },
+
+    _importFile(applyFn) {
+      const input = document.createElement('input');
+      input.type = 'file'; input.accept = '.json,application/json';
+      input.onchange = async () => {
+        const file = input.files[0]; if (!file) return;
+        try {
+          const state = JSON.parse(await file.text());
+          await applyFn(state);
+          this._scheduleSave();
+        } catch(e) { alert('Import failed: ' + e.message); }
+      };
+      input.click();
+    },
+    importConfig() { this._importFile(s => this._applyServerConfig(s)); },
+    importGraph()  { this._importFile(s => this._applyServerGraph(s));  },
+
+    // ── DB init & load ──
+    async _initDB() {
+      this.db=new TagDB();
+      await this.db.open();
+
+      // Load tag groups
+      const rawGroups=await this.db.getAll('tagGroups');
+      this.tagGroups=rawGroups.map(g=>({
+        ...g,
+        tags:(g.tags||[]).map(t=>({...t,_expanded:false})),
+        _editing:false,
+      }));
+
+      // Load project settings
+      const ps=await this.db.get('projectSettings',this.projectId);
+      this.projectSettings=ps || { projectId:this.projectId, enabledGroups:[] };
+
+      // Load node tags for this project
+      const allNodeTags=await this.db.getAll('nodeTags');
+      const nt={};
+      for(const entry of allNodeTags) if(entry.projectId===this.projectId) nt[entry.key]=entry.tagIds||[];
+      this.nodeTags=nt;
+
+      // Load HTTP headers
+      const rawHeaders=await this.db.getAll('httpHeaders');
+      this.httpHeaders=rawHeaders.map(h=>({...h}));
+
+      this._injectTagCSS();
+      this._refreshNodeClasses();
+
+      // Sync from server (overwrites local if server has data)
+      await this._fetchServerState();
+    },
+  },
+
+  watch: {
+    selectedId(id) {
+      if(!id||!this.renderer) return;
+      this.renderer.highlightNode(id);
+      // _applyDepthFilter handles layout update:
+      //   layered → setVisibleNodes(skip) + _layoutLayered(id)
+      //   force   → setVisibleNodes which only restarts if visible set changed
+      this._applyDepthFilter();
+      // For non-layered layouts, just pan to the node (layout unchanged)
+      if(this.layout !== 'layered') this.renderer.centerNode(id);
+    },
+  },
+
+  async mounted() {
+    this._onResize=this._onResize.bind(this);
+    this._stopResize=this._stopResize.bind(this);
+
+    await this.$nextTick();
+    const svgEl=this.$refs.svg;
+    if(svgEl&&this.totalFuncs>0) {
+      this.renderer=new GraphRenderer(svgEl,this.graphData,id=>this.selectFunction(id));
+      // Save to IDB whenever the force simulation naturally converges
+      this.renderer.onSimEnd = () => this.saveViewState();
+      this.renderer.init();
+    }
+    await this._initDB();
+    await this.loadViewState();
+
+    // Save on page close/refresh
+    window.addEventListener('beforeunload', () => this.saveViewState());
+  },
+}).mount('#app');
+</script>
+</body>
+</html>

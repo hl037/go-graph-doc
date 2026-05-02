@@ -1,0 +1,1278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>go-graph-doc</title>
+<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #30363d;
+  --accent: #58a6ff;
+  --accent2: #f78166;
+  --goroutine: #ffa657;
+  --text: #c9d1d9;
+  --text-dim: #6e7681;
+  --text-bright: #f0f6fc;
+  --hover: #1f2937;
+  --selected: #1c2a3a;
+  --divider: #21262d;
+  --node-stroke: #30363d;
+  --scrollbar: #30363d;
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', Menlo, monospace;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+body { overflow: hidden; height: 100vh; }
+
+#app {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* ─── Panels ───────────────────────────────────── */
+.panel-left, .panel-right {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.panel-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* ─── Dividers ──────────────────────────────────── */
+.divider {
+  width: 4px;
+  background: var(--divider);
+  cursor: col-resize;
+  flex-shrink: 0;
+  transition: background 0.15s;
+  z-index: 10;
+}
+.divider:hover, .divider.active { background: var(--accent); }
+
+/* ─── Panel Headers ─────────────────────────────── */
+.panel-header {
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.panel-header h2 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  flex: 1;
+}
+
+/* ─── Scrollable areas ──────────────────────────── */
+.scroll-area {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.scroll-area::-webkit-scrollbar { width: 6px; }
+.scroll-area::-webkit-scrollbar-track { background: transparent; }
+.scroll-area::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 3px; }
+
+/* ─── Tree View ─────────────────────────────────── */
+.search-wrap {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.search-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 9px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  font-family: inherit;
+}
+.search-input:focus { border-color: var(--accent); }
+.search-input::placeholder { color: var(--text-dim); }
+
+.tree-body { padding: 4px 0; }
+
+.pkg-row {
+  display: flex;
+  align-items: center;
+  padding: 5px 10px 5px 8px;
+  cursor: pointer;
+  user-select: none;
+  gap: 5px;
+}
+.pkg-row:hover { background: var(--hover); }
+
+.pkg-toggle {
+  color: var(--text-dim);
+  font-size: 9px;
+  width: 12px;
+  flex-shrink: 0;
+}
+
+.pkg-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pkg-path {
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pkg-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.func-list { padding-left: 0; }
+
+.func-row {
+  display: flex;
+  align-items: center;
+  padding: 3px 10px 3px 28px;
+  cursor: pointer;
+  gap: 6px;
+  border-left: 2px solid transparent;
+}
+.func-row:hover { background: var(--hover); }
+.func-row.selected {
+  background: var(--selected);
+  border-left-color: var(--accent);
+}
+
+.func-name {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.func-row.selected .func-name { color: var(--accent); }
+
+.func-line {
+  font-size: 10px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* ─── Graph toolbar ─────────────────────────────── */
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+  flex-shrink: 0;
+  background: var(--panel);
+}
+
+.toolbar-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.btn-group { display: flex; gap: 2px; }
+
+.btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn:disabled { opacity: 0.4; cursor: default; }
+
+.toolbar-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.legend-line {
+  width: 20px;
+  height: 2px;
+}
+.legend-line.goroutine {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--goroutine) 0px, var(--goroutine) 5px,
+    transparent 5px, transparent 8px
+  );
+}
+.legend-line.call { background: #888; }
+
+/* ─── SVG Graph ─────────────────────────────────── */
+.graph-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+#graph-svg {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+
+.graph-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+/* ─── Doc Panel ─────────────────────────────────── */
+.doc-nav {
+  display: flex;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.doc-nav .nav-btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 2px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.doc-nav .nav-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.doc-nav .nav-btn:disabled { opacity: 0.3; cursor: default; }
+
+.doc-counter {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+.doc-body { padding: 14px; }
+
+.doc-func-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.doc-pkg {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+.doc-signature {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 11px;
+  color: var(--accent);
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.doc-text {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text);
+  margin-bottom: 16px;
+  white-space: pre-wrap;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.doc-no-doc {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+  margin-bottom: 16px;
+}
+
+.doc-file {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.callers-callees {
+  display: flex;
+  gap: 12px;
+}
+
+.callers-col, .callees-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.cc-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cc-item {
+  font-size: 11px;
+  color: var(--text);
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+.cc-item:hover { background: var(--hover); color: var(--accent); }
+
+.cc-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 3px 6px;
+}
+
+.doc-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 20px;
+  text-align: center;
+}
+
+.doc-placeholder svg { opacity: 0.3; }
+
+/* ─── Stats bar ─────────────────────────────────── */
+.stats-bar {
+  padding: 4px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 16px;
+  font-size: 10px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  background: var(--panel);
+}
+
+/* ─── D3 SVG styles (injected as global) ────────── */
+.node-circle {
+  stroke: var(--node-stroke);
+  stroke-width: 1.5px;
+  transition: r 0.15s;
+}
+.node-label {
+  font-size: 10px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  fill: #fff;
+  pointer-events: none;
+  dominant-baseline: middle;
+  text-anchor: middle;
+}
+.pkg-hull {
+  stroke-width: 2;
+  pointer-events: none;
+}
+.pkg-label {
+  font-size: 10px;
+  fill: var(--text-dim);
+  pointer-events: none;
+  font-family: inherit;
+}
+.link-line {
+  stroke-width: 1.5;
+  fill: none;
+}
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ══════════════ LEFT: Tree View ══════════════ -->
+  <div class="panel-left" :style="{ width: leftWidth + 'vw' }">
+    <div class="panel-header">
+      <h2>Packages &amp; Functions</h2>
+      <span style="font-size:10px;color:var(--text-dim)">{{ totalFuncs }}</span>
+    </div>
+
+    <div class="search-wrap">
+      <input
+        v-model="search"
+        class="search-input"
+        placeholder="Search packages or functions…"
+        @input="onSearch"
+      >
+    </div>
+
+    <div class="scroll-area">
+      <div class="tree-body">
+        <template v-for="pkg in filteredPackages" :key="pkg.id">
+          <div class="pkg-row" @click="togglePkg(pkg.id)">
+            <span class="pkg-toggle">{{ expandedPkgs[pkg.id] ? '▼' : '▶' }}</span>
+            <span class="pkg-dot" :style="{ background: pkgColor(pkg.id) }"></span>
+            <div style="min-width:0;flex:1">
+              <div class="pkg-name">{{ pkg.name }}</div>
+              <div class="pkg-path" :title="pkg.id">{{ pkg.id }}</div>
+            </div>
+            <span style="font-size:10px;color:var(--text-dim)">{{ pkg.functions.length }}</span>
+          </div>
+          <div v-if="expandedPkgs[pkg.id]" class="func-list">
+            <div
+              v-for="fn in filteredFunctions(pkg)"
+              :key="fn.id"
+              class="func-row"
+              :class="{ selected: selectedId === fn.id }"
+              @click="selectFunction(fn.id)"
+            >
+              <span class="func-name" :title="fn.signature">{{ fn.name }}</span>
+              <span v-if="fn.line" class="func-line">:{{ fn.line }}</span>
+            </div>
+          </div>
+        </template>
+        <div v-if="filteredPackages.length === 0" style="padding:20px;color:var(--text-dim);font-size:12px;text-align:center">
+          No results for "{{ search }}"
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Divider left -->
+  <div class="divider" :class="{ active: resizing === 'left' }" @mousedown.prevent="startResize('left', $event)"></div>
+
+  <!-- ══════════════ CENTER: Graph ══════════════ -->
+  <div class="panel-center">
+    <div class="graph-toolbar">
+      <span class="toolbar-label">Layout</span>
+      <div class="btn-group">
+        <button class="btn" :class="{ active: layout === 'force' }" @click="setLayout('force')">Force</button>
+        <button class="btn" :class="{ active: layout === 'radial' }" @click="setLayout('radial')">Radial</button>
+        <button class="btn" :class="{ active: layout === 'layered' }" @click="setLayout('layered')">Layered</button>
+      </div>
+      <div class="toolbar-sep"></div>
+      <button class="btn" @click="resetZoom">Reset zoom</button>
+      <button class="btn" @click="toggleGoEdges">
+        {{ showGoEdges ? 'Hide' : 'Show' }} goroutines
+      </button>
+      <div class="legend">
+        <div class="legend-item">
+          <div class="legend-line call"></div>
+          <span>call</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-line goroutine"></div>
+          <span>goroutine</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="graph-area">
+      <svg id="graph-svg" ref="svg"></svg>
+      <div v-if="totalFuncs === 0" class="graph-empty">
+        No functions found. Check your package patterns and filters.
+      </div>
+    </div>
+
+    <div class="stats-bar">
+      <span>{{ graphData.algorithm.toUpperCase() }}</span>
+      <span v-if="graphData.focusPkg">focus: {{ graphData.focusPkg }}</span>
+      <span>{{ totalFuncs }} functions</span>
+      <span>{{ graphData.edges.length }} edges</span>
+      <span>{{ graphData.packages.length }} packages</span>
+    </div>
+  </div>
+
+  <!-- Divider right -->
+  <div class="divider" :class="{ active: resizing === 'right' }" @mousedown.prevent="startResize('right', $event)"></div>
+
+  <!-- ══════════════ RIGHT: Doc Panel ══════════════ -->
+  <div class="panel-right" :style="{ width: rightWidth + 'vw' }">
+    <div class="panel-header">
+      <h2>Documentation</h2>
+    </div>
+
+    <div class="doc-nav">
+      <button class="nav-btn" :disabled="historyIndex <= 0" @click="navigateHistory(-1)">← Prev</button>
+      <button class="nav-btn" :disabled="historyIndex >= history.length - 1" @click="navigateHistory(1)">Next →</button>
+      <span class="doc-counter" v-if="history.length > 0">
+        {{ historyIndex + 1 }} / {{ history.length }}
+      </span>
+    </div>
+
+    <div class="scroll-area">
+      <!-- Selected function doc -->
+      <div v-if="selectedFunction" class="doc-body">
+        <div class="doc-func-name">{{ selectedFunction.name }}</div>
+        <div class="doc-pkg">{{ selectedFunction.pkgPath }}</div>
+
+        <pre class="doc-signature">{{ selectedFunction.signature }}</pre>
+
+        <div v-if="selectedFunction.doc" class="doc-text">{{ selectedFunction.doc }}</div>
+        <div v-else class="doc-no-doc">No documentation available.</div>
+
+        <div v-if="selectedFunction.file" class="doc-file">
+          {{ shortPath(selectedFunction.file) }}:{{ selectedFunction.line }}
+        </div>
+
+        <div class="callers-callees">
+          <div class="callers-col">
+            <div class="cc-title">Callers ({{ selectedFunction.callerIds.length }})</div>
+            <div
+              v-for="id in selectedFunction.callerIds"
+              :key="id"
+              class="cc-item"
+              :title="functionMap[id]?.signature || id"
+              @click="selectFunction(id)"
+            >{{ functionMap[id]?.name || shortId(id) }}</div>
+            <div v-if="selectedFunction.callerIds.length === 0" class="cc-empty">none</div>
+          </div>
+
+          <div class="callees-col">
+            <div class="cc-title">Callees ({{ selectedFunction.calleeIds.length }})</div>
+            <div
+              v-for="id in selectedFunction.calleeIds"
+              :key="id"
+              class="cc-item"
+              :title="functionMap[id]?.signature || id"
+              @click="selectFunction(id)"
+            >{{ functionMap[id]?.name || shortId(id) }}</div>
+            <div v-if="selectedFunction.calleeIds.length === 0" class="cc-empty">none</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Placeholder -->
+      <div v-else class="doc-placeholder">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+        <span>Click a function in the graph<br>or tree view to see its documentation.</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ─── Injected data ────────────────────────────────────────────────────────────
+const GRAPH_DATA = {{json .}};
+
+// ─── Colour palette ───────────────────────────────────────────────────────────
+const PKG_COLORS = [
+  '#58a6ff','#f78166','#ffa657','#3fb950','#d2a8ff',
+  '#79c0ff','#ff7b72','#56d364','#e3b341','#bc8cff',
+  '#1f6feb','#da3633','#388bfd','#2ea043','#8957e5',
+];
+const pkgColorMap = {};
+let colorIdx = 0;
+function getPkgColor(pkgPath) {
+  if (!pkgColorMap[pkgPath]) {
+    pkgColorMap[pkgPath] = PKG_COLORS[colorIdx++ % PKG_COLORS.length];
+  }
+  return pkgColorMap[pkgPath];
+}
+
+// Precompute colours so left panel and graph are consistent
+for (const pkg of GRAPH_DATA.packages) getPkgColor(pkg.id);
+
+// ─── Graph Renderer ───────────────────────────────────────────────────────────
+class GraphRenderer {
+  constructor(svgEl, graphData, onNodeClick) {
+    this.svgEl = svgEl;
+    this.graphData = graphData;
+    this.onNodeClick = onNodeClick;
+    this.layout = 'force';
+    this.simulation = null;
+    this.zoom = null;
+    this.g = null;
+    this.nodes = [];
+    this.links = [];
+    this.nodeIndex = {};
+    this.linkEls = null;
+    this.nodeEls = null;
+    this.hullPaths = null;
+    this.hullLabels = null;
+    this.selectedId = null;
+    this.showGoEdges = true;
+  }
+
+  init() {
+    const svgEl = this.svgEl;
+    const svg = d3.select(svgEl);
+    const W = svgEl.clientWidth || 800;
+    const H = svgEl.clientHeight || 600;
+
+    svg.selectAll('*').remove();
+
+    // ── Defs: arrowhead markers ──
+    const defs = svg.append('defs');
+    const mkArrow = (id, color) =>
+      defs.append('marker')
+        .attr('id', id)
+        .attr('viewBox', '0 -4 8 8')
+        .attr('refX', 22)
+        .attr('refY', 0)
+        .attr('markerWidth', 5)
+        .attr('markerHeight', 5)
+        .attr('orient', 'auto')
+        .append('path')
+        .attr('d', 'M0,-4L8,0L0,4')
+        .attr('fill', color);
+    mkArrow('arrow-call', '#888');
+    mkArrow('arrow-goroutine', '#ffa657');
+    mkArrow('arrow-call-hi', '#58a6ff');
+
+    // ── Zoom ──
+    this.zoom = d3.zoom()
+      .scaleExtent([0.03, 8])
+      .on('zoom', (ev) => this.g.attr('transform', ev.transform));
+    svg.call(this.zoom);
+    svg.on('dblclick.zoom', null); // disable dblclick zoom
+
+    // ── Main group ──
+    this.g = svg.append('g');
+
+    // ── Prepare node/link data ──
+    this.nodes = [];
+    this.nodeIndex = {};
+
+    for (const pkg of this.graphData.packages) {
+      const color = getPkgColor(pkg.id);
+      for (const fn of pkg.functions) {
+        const node = {
+          ...fn,
+          x: W / 2 + (Math.random() - 0.5) * 200,
+          y: H / 2 + (Math.random() - 0.5) * 200,
+          color,
+        };
+        this.nodes.push(node);
+        this.nodeIndex[fn.id] = node;
+      }
+    }
+
+    this.links = this.graphData.edges
+      .filter(e => this.nodeIndex[e.from] && this.nodeIndex[e.to])
+      .map(e => ({
+        source: this.nodeIndex[e.from],
+        target: this.nodeIndex[e.to],
+        isGoroutine: e.isGoroutine,
+      }));
+
+    // ── Layer order: hulls → links → nodes ──
+    this.hullLayer = this.g.append('g').attr('class', 'hull-layer');
+    this.linkLayer = this.g.append('g').attr('class', 'link-layer');
+    this.nodeLayer = this.g.append('g').attr('class', 'node-layer');
+
+    this._buildHulls();
+    this._buildLinks();
+    this._buildNodes();
+
+    // ── ResizeObserver ──
+    const ro = new ResizeObserver(() => {
+      if (this.layout === 'force' && this.simulation) {
+        this.simulation.force('center', d3.forceCenter(svgEl.clientWidth / 2, svgEl.clientHeight / 2));
+        this.simulation.alpha(0.1).restart();
+      }
+    });
+    ro.observe(svgEl);
+
+    this.setLayout('force');
+  }
+
+  _buildHulls() {
+    const pkgs = this.graphData.packages.map(p => ({ id: p.id, color: getPkgColor(p.id) }));
+
+    this.hullPaths = this.hullLayer.selectAll('path')
+      .data(pkgs).enter().append('path')
+      .attr('class', 'pkg-hull')
+      .attr('fill', d => d.color + '18')
+      .attr('stroke', d => d.color + '55')
+      .attr('stroke-width', 2)
+      .attr('rx', 12);
+
+    this.hullLabels = this.hullLayer.selectAll('text')
+      .data(pkgs).enter().append('text')
+      .attr('class', 'pkg-label')
+      .text(d => {
+        const pkg = this.graphData.packages.find(p => p.id === d.id);
+        return pkg ? pkg.name : d.id;
+      })
+      .style('fill', d => d.color)
+      .style('opacity', 0.7);
+  }
+
+  _buildLinks() {
+    this.linkEls = this.linkLayer.selectAll('line')
+      .data(this.links).enter().append('line')
+      .attr('class', 'link-line')
+      .attr('stroke', d => d.isGoroutine ? '#ffa657' : '#444')
+      .attr('stroke-dasharray', d => d.isGoroutine ? '6,3' : null)
+      .attr('marker-end', d => d.isGoroutine ? 'url(#arrow-goroutine)' : 'url(#arrow-call)')
+      .attr('opacity', 0.7);
+  }
+
+  _buildNodes() {
+    const self = this;
+
+    this.nodeEls = this.nodeLayer.selectAll('g')
+      .data(this.nodes).enter().append('g')
+      .attr('class', 'node')
+      .style('cursor', 'pointer')
+      .on('click', function(ev, d) {
+        ev.stopPropagation();
+        self.onNodeClick(d.id);
+      })
+      .call(
+        d3.drag()
+          .on('start', (ev, d) => {
+            if (!ev.active && this.simulation) this.simulation.alphaTarget(0.3).restart();
+            d.fx = d.x; d.fy = d.y;
+          })
+          .on('drag', (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
+          .on('end', (ev, d) => {
+            if (!ev.active && this.simulation) this.simulation.alphaTarget(0);
+            if (this.layout === 'force') { d.fx = null; d.fy = null; }
+          })
+      );
+
+    this.nodeEls.append('circle')
+      .attr('class', 'node-circle')
+      .attr('r', 18)
+      .attr('fill', d => d.color);
+
+    this.nodeEls.append('text')
+      .attr('class', 'node-label')
+      .text(d => trunc(d.name, 12));
+
+    this.nodeEls.append('title').text(d => d.signature || d.id);
+  }
+
+  setLayout(layout) {
+    this.layout = layout;
+    if (this.simulation) { this.simulation.stop(); this.simulation = null; }
+
+    // Release fixed positions before re-laying out
+    for (const n of this.nodes) { n.fx = null; n.fy = null; }
+
+    if (layout === 'force') this._layoutForce();
+    else if (layout === 'radial') this._layoutRadial();
+    else if (layout === 'layered') this._layoutLayered();
+  }
+
+  _layoutForce() {
+    const W = this.svgEl.clientWidth, H = this.svgEl.clientHeight;
+
+    this.simulation = d3.forceSimulation(this.nodes)
+      .force('link', d3.forceLink(this.links).id(d => d.id).distance(90).strength(0.4))
+      .force('charge', d3.forceManyBody().strength(-350))
+      .force('center', d3.forceCenter(W / 2, H / 2))
+      .force('collision', d3.forceCollide(26))
+      .force('pkg', this._pkgForce())
+      .on('tick', () => this._tick());
+
+    this.simulation.alpha(1).restart();
+  }
+
+  _pkgForce() {
+    // Gentle force attracting same-package nodes together
+    return () => {
+      const pkgCentroid = {};
+      for (const n of this.nodes) {
+        if (!pkgCentroid[n.pkgPath]) pkgCentroid[n.pkgPath] = { x: 0, y: 0, count: 0 };
+        pkgCentroid[n.pkgPath].x += n.x;
+        pkgCentroid[n.pkgPath].y += n.y;
+        pkgCentroid[n.pkgPath].count++;
+      }
+      for (const k of Object.keys(pkgCentroid)) {
+        pkgCentroid[k].x /= pkgCentroid[k].count;
+        pkgCentroid[k].y /= pkgCentroid[k].count;
+      }
+      for (const n of this.nodes) {
+        const c = pkgCentroid[n.pkgPath];
+        const strength = 0.03;
+        n.vx += (c.x - n.x) * strength;
+        n.vy += (c.y - n.y) * strength;
+      }
+    };
+  }
+
+  _layoutRadial() {
+    const W = this.svgEl.clientWidth, H = this.svgEl.clientHeight;
+    const cx = W / 2, cy = H / 2;
+
+    // BFS from root (selected or first node)
+    const root = (this.selectedId && this.nodeIndex[this.selectedId]) || this.nodes[0];
+    if (!root) return;
+
+    const visited = new Set();
+    const levels = [];
+    const queue = [root];
+    visited.add(root.id);
+
+    while (queue.length) {
+      const current = [...queue];
+      queue.length = 0;
+      levels.push(current);
+      for (const node of current) {
+        for (const link of this.links) {
+          const src = link.source;
+          const tgt = link.target;
+          if (src === node && !visited.has(tgt.id)) {
+            visited.add(tgt.id);
+            queue.push(tgt);
+          }
+        }
+      }
+    }
+
+    const ringR = 110;
+    levels.forEach((level, depth) => {
+      const r = depth * ringR + 40;
+      level.forEach((node, i) => {
+        const angle = (2 * Math.PI * i / level.length) - Math.PI / 2;
+        node.fx = cx + r * Math.cos(angle);
+        node.fy = cy + r * Math.sin(angle);
+      });
+    });
+
+    // Unvisited: outer ring
+    const unvisited = this.nodes.filter(n => !visited.has(n.id));
+    const outerR = levels.length * ringR + 80;
+    unvisited.forEach((n, i) => {
+      const angle = (2 * Math.PI * i / Math.max(unvisited.length, 1));
+      n.fx = cx + outerR * Math.cos(angle);
+      n.fy = cy + outerR * Math.sin(angle);
+    });
+
+    this.simulation = d3.forceSimulation(this.nodes)
+      .force('link', d3.forceLink(this.links).id(d => d.id).strength(0))
+      .alpha(0.3)
+      .on('tick', () => this._tick());
+    this._tick();
+  }
+
+  _layoutLayered() {
+    const W = this.svgEl.clientWidth, H = this.svgEl.clientHeight;
+
+    // Kahn's topological sort → layers
+    const inDeg = {};
+    const adj = {};
+    for (const n of this.nodes) { inDeg[n.id] = 0; adj[n.id] = []; }
+    for (const l of this.links) {
+      const s = typeof l.source === 'object' ? l.source.id : l.source;
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      if (inDeg[t] !== undefined) inDeg[t]++;
+      if (adj[s]) adj[s].push(t);
+    }
+
+    const queue = this.nodes.filter(n => inDeg[n.id] === 0);
+    const layers = [];
+    const placed = new Set();
+
+    while (queue.length) {
+      const layer = [...queue];
+      queue.length = 0;
+      layers.push(layer);
+      for (const n of layer) {
+        placed.add(n.id);
+        for (const nid of adj[n.id]) {
+          inDeg[nid]--;
+          if (inDeg[nid] === 0 && !placed.has(nid)) {
+            const node = this.nodeIndex[nid];
+            if (node) queue.push(node);
+          }
+        }
+      }
+    }
+
+    const remaining = this.nodes.filter(n => !placed.has(n.id));
+    if (remaining.length) layers.push(remaining);
+
+    const layerH = Math.min(120, (H - 80) / Math.max(layers.length, 1));
+    layers.forEach((layer, li) => {
+      const y = 50 + li * layerH;
+      const spacing = (W - 80) / Math.max(layer.length, 1);
+      layer.forEach((node, i) => {
+        node.fx = 40 + spacing * (i + 0.5);
+        node.fy = y;
+      });
+    });
+
+    this.simulation = d3.forceSimulation(this.nodes)
+      .force('link', d3.forceLink(this.links).id(d => d.id).strength(0))
+      .alpha(0.3)
+      .on('tick', () => this._tick());
+    this._tick();
+  }
+
+  _tick() {
+    const goVisible = this.showGoEdges;
+    this.linkEls
+      .attr('x1', d => d.source.x)
+      .attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x)
+      .attr('y2', d => d.target.y)
+      .attr('display', d => (!goVisible && d.isGoroutine) ? 'none' : null);
+
+    this.nodeEls.attr('transform', d => `translate(${d.x},${d.y})`);
+    this._updateHulls();
+  }
+
+  _updateHulls() {
+    this.hullPaths.attr('d', d => {
+      const pts = this.nodes
+        .filter(n => n.pkgPath === d.id)
+        .map(n => [n.x, n.y]);
+      return hullPath(pts, 30);
+    });
+
+    this.hullLabels.attr('transform', d => {
+      const pts = this.nodes.filter(n => n.pkgPath === d.id).map(n => [n.x, n.y]);
+      if (!pts.length) return 'translate(-9999,-9999)';
+      const minX = Math.min(...pts.map(p => p[0]));
+      const minY = Math.min(...pts.map(p => p[1]));
+      return `translate(${minX - 20}, ${minY - 20})`;
+    });
+  }
+
+  centerNode(id) {
+    const node = this.nodeIndex[id];
+    if (!node) return;
+    const svg = d3.select(this.svgEl);
+    const W = this.svgEl.clientWidth, H = this.svgEl.clientHeight;
+    const t = d3.zoomTransform(this.svgEl);
+    svg.transition().duration(600).call(
+      this.zoom.transform,
+      d3.zoomIdentity
+        .translate(W / 2 - t.k * node.x, H / 2 - t.k * node.y)
+        .scale(t.k)
+    );
+  }
+
+  highlightNode(id) {
+    this.selectedId = id;
+    const nodeEls = this.nodeEls;
+
+    nodeEls.select('circle')
+      .attr('r', d => d.id === id ? 24 : 18)
+      .attr('stroke', d => d.id === id ? '#fff' : '#30363d')
+      .attr('stroke-width', d => d.id === id ? 2.5 : 1.5);
+
+    nodeEls.select('text')
+      .attr('fill', d => d.id === id ? '#fff' : '#ccc');
+
+    this.linkEls
+      .attr('stroke', d => {
+        const s = typeof d.source === 'object' ? d.source.id : d.source;
+        const t = typeof d.target === 'object' ? d.target.id : d.target;
+        if (s === id || t === id) return d.isGoroutine ? '#ffa657' : '#58a6ff';
+        return d.isGoroutine ? '#ffa65740' : '#44444488';
+      })
+      .attr('stroke-width', d => {
+        const s = typeof d.source === 'object' ? d.source.id : d.source;
+        const t = typeof d.target === 'object' ? d.target.id : d.target;
+        return (s === id || t === id) ? 2 : 1;
+      })
+      .attr('marker-end', d => {
+        const s = typeof d.source === 'object' ? d.source.id : d.source;
+        const t = typeof d.target === 'object' ? d.target.id : d.target;
+        if ((s === id || t === id)) {
+          return d.isGoroutine ? 'url(#arrow-goroutine)' : 'url(#arrow-call-hi)';
+        }
+        return d.isGoroutine ? 'url(#arrow-goroutine)' : 'url(#arrow-call)';
+      });
+  }
+
+  resetZoom() {
+    d3.select(this.svgEl)
+      .transition().duration(500)
+      .call(this.zoom.transform, d3.zoomIdentity);
+  }
+
+  setShowGoEdges(v) {
+    this.showGoEdges = v;
+    this._tick();
+  }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function trunc(s, n) {
+  return s && s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+function hullPath(pts, padding) {
+  if (!pts.length) return null;
+  if (pts.length === 1) {
+    const [x, y] = pts[0];
+    const r = padding;
+    return `M${x},${y-r} a${r},${r} 0 1,0 0.001,0 Z`;
+  }
+  const padded = [];
+  for (const [x, y] of pts) {
+    for (let a = 0; a < 8; a++) {
+      const angle = (a / 8) * 2 * Math.PI;
+      padded.push([x + padding * Math.cos(angle), y + padding * Math.sin(angle)]);
+    }
+  }
+  const hull = d3.polygonHull(padded);
+  if (!hull) return null;
+  return 'M' + hull.map(p => p.join(',')).join('L') + 'Z';
+}
+
+// ─── Vue App ──────────────────────────────────────────────────────────────────
+const { createApp, reactive } = Vue;
+
+createApp({
+  data() {
+    return {
+      graphData: GRAPH_DATA,
+      selectedId: null,
+      history: [],
+      historyIndex: -1,
+      search: '',
+      expandedPkgs: Object.fromEntries(GRAPH_DATA.packages.map(p => [p.id, true])),
+      leftWidth: 20,
+      rightWidth: 20,
+      resizing: null,
+      resizeStartX: 0,
+      layout: 'force',
+      showGoEdges: true,
+      renderer: null,
+    };
+  },
+
+  computed: {
+    functionMap() {
+      const m = {};
+      for (const pkg of this.graphData.packages)
+        for (const fn of pkg.functions)
+          m[fn.id] = fn;
+      return m;
+    },
+
+    selectedFunction() {
+      return this.selectedId ? this.functionMap[this.selectedId] : null;
+    },
+
+    totalFuncs() {
+      return this.graphData.packages.reduce((s, p) => s + p.functions.length, 0);
+    },
+
+    filteredPackages() {
+      if (!this.search) return this.graphData.packages;
+      const q = this.search.toLowerCase();
+      return this.graphData.packages
+        .filter(pkg =>
+          pkg.id.toLowerCase().includes(q) ||
+          pkg.name.toLowerCase().includes(q) ||
+          pkg.functions.some(f => f.name.toLowerCase().includes(q))
+        );
+    },
+  },
+
+  methods: {
+    pkgColor(id) { return getPkgColor(id); },
+
+    filteredFunctions(pkg) {
+      if (!this.search) return pkg.functions;
+      const q = this.search.toLowerCase();
+      return pkg.functions.filter(f => f.name.toLowerCase().includes(q));
+    },
+
+    onSearch() {
+      // Auto-expand packages that have matches
+      if (this.search) {
+        const q = this.search.toLowerCase();
+        for (const pkg of this.graphData.packages) {
+          if (pkg.functions.some(f => f.name.toLowerCase().includes(q))) {
+            this.expandedPkgs[pkg.id] = true;
+          }
+        }
+      }
+    },
+
+    togglePkg(id) {
+      this.expandedPkgs[id] = !this.expandedPkgs[id];
+    },
+
+    selectFunction(id) {
+      if (!this.functionMap[id]) return;
+      if (this.selectedId === id) return;
+
+      // Cut forward history
+      if (this.historyIndex < this.history.length - 1) {
+        this.history = this.history.slice(0, this.historyIndex + 1);
+      }
+      this.history.push(id);
+      this.historyIndex = this.history.length - 1;
+      this.selectedId = id;
+    },
+
+    navigateHistory(dir) {
+      const newIdx = this.historyIndex + dir;
+      if (newIdx < 0 || newIdx >= this.history.length) return;
+      this.historyIndex = newIdx;
+      this.selectedId = this.history[newIdx];
+    },
+
+    startResize(panel, event) {
+      this.resizing = panel;
+      this.resizeStartX = event.clientX;
+      document.addEventListener('mousemove', this._onResize);
+      document.addEventListener('mouseup', this._stopResize);
+    },
+
+    _onResize(event) {
+      const dx = event.clientX - this.resizeStartX;
+      const vw = (dx / window.innerWidth) * 100;
+      if (this.resizing === 'left') {
+        this.leftWidth = Math.max(0, this.leftWidth + vw);
+      } else {
+        this.rightWidth = Math.max(0, this.rightWidth - vw);
+      }
+      this.resizeStartX = event.clientX;
+    },
+
+    _stopResize() {
+      this.resizing = null;
+      document.removeEventListener('mousemove', this._onResize);
+      document.removeEventListener('mouseup', this._stopResize);
+    },
+
+    setLayout(l) {
+      this.layout = l;
+      this.renderer?.setLayout(l);
+    },
+
+    resetZoom() {
+      this.renderer?.resetZoom();
+    },
+
+    toggleGoEdges() {
+      this.showGoEdges = !this.showGoEdges;
+      this.renderer?.setShowGoEdges(this.showGoEdges);
+    },
+
+    shortPath(path) {
+      // Show last 3 path components
+      const parts = path.replace(/\\/g, '/').split('/');
+      return parts.slice(-3).join('/');
+    },
+
+    shortId(id) {
+      const parts = id.split('.');
+      return parts[parts.length - 1] || id;
+    },
+  },
+
+  watch: {
+    selectedId(id) {
+      if (id && this.renderer) {
+        this.renderer.highlightNode(id);
+        this.renderer.centerNode(id);
+      }
+    },
+  },
+
+  mounted() {
+    // Bind resize methods once so removeEventListener works
+    this._onResize = this._onResize.bind(this);
+    this._stopResize = this._stopResize.bind(this);
+
+    this.$nextTick(() => {
+      const svgEl = this.$refs.svg;
+      if (!svgEl || this.totalFuncs === 0) return;
+
+      this.renderer = new GraphRenderer(
+        svgEl,
+        this.graphData,
+        (id) => this.selectFunction(id)
+      );
+      this.renderer.init();
+    });
+  },
+}).mount('#app');
+</script>
+</body>
+</html>
