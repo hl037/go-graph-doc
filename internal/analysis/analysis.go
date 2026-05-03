@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
-	"go-graph-doc/internal/data"
+	"github.com/hl037/go-graph-doc/internal/data"
 )
 
 type Config struct {

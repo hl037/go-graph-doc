@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 
 	"github.com/adrg/xdg"
-	"go-graph-doc/internal/analysis"
-	"go-graph-doc/internal/server"
+	"github.com/hl037/go-graph-doc/internal/analysis"
+	"github.com/hl037/go-graph-doc/internal/server"
 )
 
 func main() {

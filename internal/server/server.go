@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"go-graph-doc/internal/data"
+	"github.com/hl037/go-graph-doc/internal/data"
 )
 
 //go:embed index.html

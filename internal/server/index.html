@@ -793,9 +793,12 @@ class GraphRenderer {
     mkArrow('arrow-call','#888'); mkArrow('arrow-goroutine','#ffa657'); mkArrow('arrow-call-hi','#58a6ff');
     mkArrow('arrow-impl','#c792ea'); mkArrow('arrow-impl-hi','#e0b0ff');
 
-    this.zoom = d3.zoom().scaleExtent([0.03, 8]).on('zoom', ev => this.g.attr('transform', ev.transform));
+    this.zoom = d3.zoom().scaleExtent([0.03, 8]).on('zoom', ev => {
+      const {x, y, k} = ev.transform;
+      this.g.style('transform', `translate(${x}px,${y}px) scale(${k})`);
+    });
     svg.call(this.zoom); svg.on('dblclick.zoom', null);
-    this.g = svg.append('g');
+    this.g = svg.append('g').style('will-change','transform').style('transform-origin','0 0');
 
     this.nodes = []; this.nodeIndex = {};
     for (const pkg of this.graphData.packages) {
@@ -1243,6 +1246,7 @@ createApp({
       serverSynced: false,
       _saveTimer: null,
       conflictDialog: null,   // { label, resolve }
+      _dbReady: false,
     };
   },
 
@@ -1442,13 +1446,11 @@ createApp({
     isGroupEnabled(groupId) {
       return this.projectSettings?.enabledGroups.includes(groupId) ?? false;
     },
-    async toggleGroupEnabled(groupId) {
+    toggleGroupEnabled(groupId) {
       if(!this.projectSettings) this.projectSettings={ projectId:this.projectId, enabledGroups:[] };
       const idx=this.projectSettings.enabledGroups.indexOf(groupId);
       if(idx>=0) this.projectSettings.enabledGroups.splice(idx,1);
       else this.projectSettings.enabledGroups.push(groupId);
-      await this.db.put('projectSettings', { projectId:this.projectId, enabledGroups:[...this.projectSettings.enabledGroups] });
-      this._scheduleSave();
       this._refreshNodeClasses();
     },
 
@@ -1457,49 +1459,35 @@ createApp({
       const key=`${this.projectId}:${nodeId}`;
       return (this.nodeTags[key]||[]).includes(tagId);
     },
-    async toggleNodeTag(nodeId, tagId) {
+    toggleNodeTag(nodeId, tagId) {
       const key=`${this.projectId}:${nodeId}`;
       const tags=[...(this.nodeTags[key]||[])];
       const idx=tags.indexOf(tagId);
       if(idx>=0) tags.splice(idx,1); else tags.push(tagId);
       this.nodeTags[key]=tags;
-      await this.db.put('nodeTags',{ key, projectId:this.projectId, nodeId, tagIds:tags });
       this._refreshNodeClasses();
-      this._scheduleSave();
     },
 
     // ── Tag group CRUD ──
-    async addGroup() {
+    addGroup() {
       const group={ id:uuid(), name:'New Group', tags:[], _editing:true };
       this.tagGroups.push(group);
-      await this.db.put('tagGroups',{ id:group.id, name:group.name, tags:[] });
     },
-    async deleteGroup(groupId) {
+    deleteGroup(groupId) {
       const idx=this.tagGroups.findIndex(g=>g.id===groupId);
       if(idx>=0) this.tagGroups.splice(idx,1);
-      await this.db.delete('tagGroups',groupId);
       this._injectTagCSS();
       this._refreshNodeClasses();
     },
     startEditGroup(group) { group._editing=true; },
-    async finishEditGroup(group) {
-      group._editing=false;
-      await this.saveGroup(group);
-    },
-    async saveGroup(group) {
-      await this.db.put('tagGroups',{ id:group.id, name:group.name, tags:group.tags.map(t=>({id:t.id,name:t.name,nodeCSS:t.nodeCSS||'',labelCSS:t.labelCSS||''})) });
-      this._scheduleSave();
-    },
-    async saveGroupAndInject(group) {
-      await this.saveGroup(group);
-      this._injectTagCSS();
-    },
+    finishEditGroup(group) { group._editing=false; },
+    saveGroup() { /* watcher handles persistence */ },
+    saveGroupAndInject(group) { this._injectTagCSS(); },
 
     // ── Tag CRUD within group ──
-    async addTag(group) {
+    addTag(group) {
       const tag={ id:uuid(), name:'New Tag', nodeCSS:'', labelCSS:'', _expanded:true };
       group.tags.push(tag);
-      await this.saveGroup(group);
     },
     async deleteTag(group, tagId) {
       const idx=group.tags.findIndex(t=>t.id===tagId);
@@ -1620,24 +1608,16 @@ createApp({
       } catch { /* silent */ }
     },
 
-    async _applyServerConfig(state) {
+    _applyServerConfig(state) {
       if (!state) return;
-      if (Array.isArray(state.tagGroups) && state.tagGroups.length > 0) {
-        for (const g of state.tagGroups) await this.db.put('tagGroups', g);
+      if (Array.isArray(state.tagGroups))
         this.tagGroups = state.tagGroups.map(g => ({ ...g, tags: (g.tags||[]).map(t => ({...t, _expanded: false})), _editing: false }));
-      }
-      if (state.projectSettings) {
-        const ps = { ...state.projectSettings, projectId: this.projectId };
-        await this.db.put('projectSettings', ps);
-        this.projectSettings = ps;
-      }
+      if (state.projectSettings)
+        this.projectSettings = { ...state.projectSettings, projectId: this.projectId };
       if (state.nodeTags && typeof state.nodeTags === 'object') {
         const nt = {};
-        for (const [nodeId, tagIds] of Object.entries(state.nodeTags)) {
-          const key = `${this.projectId}:${nodeId}`;
-          await this.db.put('nodeTags', { key, projectId: this.projectId, nodeId, tagIds });
-          nt[key] = tagIds;
-        }
+        for (const [nodeId, tagIds] of Object.entries(state.nodeTags))
+          nt[`${this.projectId}:${nodeId}`] = tagIds;
         this.nodeTags = nt;
       }
       this._injectTagCSS();
@@ -1647,31 +1627,6 @@ createApp({
     async _applyServerGraph(state) {
       if (!state?.viewState) return;
       await this.db.put('viewState', { ...state.viewState, projectId: this.projectId });
-    },
-
-    async _applyServerState(state) {
-      if (!state || typeof state !== 'object') return;
-      if (Array.isArray(state.tagGroups) && state.tagGroups.length > 0) {
-        for (const g of state.tagGroups) await this.db.put('tagGroups', g);
-        this.tagGroups = state.tagGroups.map(g => ({ ...g, tags: (g.tags||[]).map(t => ({...t, _expanded: false})), _editing: false }));
-      }
-      if (state.viewState) await this.db.put('viewState', { ...state.viewState, projectId: this.projectId });
-      if (state.projectSettings) {
-        const ps = { ...state.projectSettings, projectId: this.projectId };
-        await this.db.put('projectSettings', ps);
-        this.projectSettings = ps;
-      }
-      if (state.nodeTags && typeof state.nodeTags === 'object') {
-        const nt = {};
-        for (const [nodeId, tagIds] of Object.entries(state.nodeTags)) {
-          const key = `${this.projectId}:${nodeId}`;
-          await this.db.put('nodeTags', { key, projectId: this.projectId, nodeId, tagIds });
-          nt[key] = tagIds;
-        }
-        this.nodeTags = nt;
-      }
-      this._injectTagCSS();
-      this._refreshNodeClasses();
     },
 
     async _collectConfig() {
@@ -1765,12 +1720,45 @@ createApp({
       this._injectTagCSS();
       this._refreshNodeClasses();
 
+      this._dbReady = true;
+
       // Sync from server (overwrites local if server has data)
       await this._fetchServerState();
     },
   },
 
   watch: {
+    tagGroups: {
+      deep: true,
+      async handler(val) {
+        if (!this._dbReady || !this.db) return;
+        const existing = await this.db.getAll('tagGroups');
+        for (const g of existing) await this.db.delete('tagGroups', g.id);
+        for (const g of val)
+          await this.db.put('tagGroups', { id:g.id, name:g.name, tags:g.tags.map(t=>({id:t.id,name:t.name,nodeCSS:t.nodeCSS||'',labelCSS:t.labelCSS||''})) });
+        this._scheduleSave();
+      }
+    },
+    projectSettings: {
+      deep: true,
+      async handler(val) {
+        if (!this._dbReady || !this.db || !val) return;
+        await this.db.put('projectSettings', { projectId:val.projectId, enabledGroups:[...val.enabledGroups] });
+        this._scheduleSave();
+      }
+    },
+    nodeTags: {
+      deep: true,
+      async handler(val) {
+        if (!this._dbReady || !this.db) return;
+        for (const [key, tagIds] of Object.entries(val)) {
+          const nodeId = key.startsWith(this.projectId+':') ? key.slice(this.projectId.length+1) : key;
+          await this.db.put('nodeTags', { key, projectId:this.projectId, nodeId, tagIds });
+        }
+        this._scheduleSave();
+      }
+    },
+
     selectedId(id) {
       if(!id||!this.renderer) return;
       this.renderer.highlightNode(id);
@@ -1779,7 +1767,7 @@ createApp({
       //   force   → setVisibleNodes which only restarts if visible set changed
       this._applyDepthFilter();
       // For non-layered layouts, just pan to the node (layout unchanged)
-      if(this.layout !== 'layered') this.renderer.centerNode(id);
+      if(this.layout !== 'layered') requestAnimationFrame(() => this.renderer?.centerNode(id));
     },
   },
 
